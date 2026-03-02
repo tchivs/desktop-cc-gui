@@ -20,6 +20,7 @@ type AskUserQuestionDialogProps = {
   requests: RequestUserInputRequest[];
   activeThreadId: string | null;
   activeWorkspaceId?: string | null;
+  activeEngine?: string | null;
   onSubmit: (
     request: RequestUserInputRequest,
     response: RequestUserInputResponse,
@@ -34,6 +35,7 @@ export function AskUserQuestionDialog({
   requests,
   activeThreadId,
   activeWorkspaceId,
+  activeEngine,
   onSubmit,
 }: AskUserQuestionDialogProps) {
   const { t } = useTranslation();
@@ -42,7 +44,8 @@ export function AskUserQuestionDialog({
     () =>
       requests.filter((req) => {
         if (!activeThreadId) return false;
-        if (req.params.thread_id !== activeThreadId) return false;
+        const requestThreadId = (req.params.thread_id ?? "").trim();
+        if (requestThreadId && requestThreadId !== activeThreadId) return false;
         if (activeWorkspaceId && req.workspace_id !== activeWorkspaceId) return false;
         return true;
       }),
@@ -163,6 +166,9 @@ export function AskUserQuestionDialog({
   const currentCustom = customInputs[qKey] ?? "";
   const isOtherSelected = currentSelections.has(OTHER_OPTION_MARKER);
   const currentSecretVis = secretVisible[qKey] ?? false;
+  const isPlanBlockerQuestion = currentQ.id === "plan_blocker_resolution";
+  const isCodexEngine = (activeEngine ?? "").trim().toLowerCase() === "codex";
+  const useComposerOverlayMode = isPlanBlockerQuestion && isCodexEngine;
 
   const hasRegularSelection = Array.from(currentSelections).some((l) => l !== OTHER_OPTION_MARKER);
   const hasValidCustom = isOtherSelected && currentCustom.trim().length > 0;
@@ -262,8 +268,16 @@ export function AskUserQuestionDialog({
   const totalRequests = activeRequests.length;
 
   return (
-    <div className={`ask-user-question-overlay${isCollapsed ? " is-collapsed" : ""}`}>
-      {!isCollapsed && (
+    <div
+      className={[
+        "ask-user-question-overlay",
+        isCollapsed && "is-collapsed",
+        useComposerOverlayMode && "is-composer-overlay",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      {!isCollapsed && !useComposerOverlayMode && (
         <div className="ask-user-question-backdrop" onClick={handleCancel} />
       )}
       <div
@@ -271,6 +285,7 @@ export function AskUserQuestionDialog({
           "ask-user-question-card",
           isCollapsed && "is-collapsed",
           isTimeWarning && "is-time-warning",
+          useComposerOverlayMode && "is-composer-overlay",
         ]
           .filter(Boolean)
           .join(" ")}

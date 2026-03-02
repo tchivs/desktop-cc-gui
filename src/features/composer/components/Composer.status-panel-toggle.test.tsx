@@ -85,13 +85,13 @@ describe("Composer status panel toggle visibility", () => {
     ).toBe("true");
   });
 
-  it("hides status panel toggle on codex engine", () => {
+  it("shows status panel toggle on codex engine", () => {
     render(<ComposerHarness selectedEngine="codex" />);
-    expect(screen.queryByTestId("status-panel")).toBeNull();
+    expect(screen.getByTestId("status-panel")).not.toBeNull();
     expect(
       screen
         .getByTestId("chat-input-box-adapter")
         .getAttribute("data-show-status-panel-toggle"),
-    ).toBe("false");
+    ).toBe("true");
   });
 });

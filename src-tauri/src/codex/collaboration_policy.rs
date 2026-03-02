@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 
 pub(crate) const COLLABORATION_POLICY_VERSION: &str = "mossx-collaboration-policy/v1";
 
-const DEFAULT_EFFECTIVE_MODE: &str = "plan";
+const DEFAULT_EFFECTIVE_MODE: &str = "code";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RequestUserInputPolicy {
@@ -32,6 +32,7 @@ pub(crate) struct CodexCollaborationPolicy {
 pub(crate) fn normalize_mode(value: Option<&str>) -> Option<String> {
     match value.map(|raw| raw.trim().to_lowercase()) {
         Some(mode) if mode == "plan" || mode == "code" => Some(mode),
+        Some(mode) if mode == "default" => Some("code".to_string()),
         _ => None,
     }
 }
@@ -79,11 +80,11 @@ pub(crate) fn resolve_policy(
         ),
         (None, None) if selected_mode.is_some() => (
             DEFAULT_EFFECTIVE_MODE.to_string(),
-            Some("invalid_mode_in_request_default_plan".to_string()),
+            Some("invalid_mode_in_request_default_code".to_string()),
         ),
         (None, None) => (
             DEFAULT_EFFECTIVE_MODE.to_string(),
-            Some("missing_mode_in_request_default_plan".to_string()),
+            Some("missing_mode_in_request_default_code".to_string()),
         ),
     };
 
@@ -106,12 +107,16 @@ pub(crate) fn resolve_policy(
 pub(crate) fn build_policy_directives(effective_mode: &str) -> Vec<String> {
     if effective_mode == "code" {
         vec![
-            "Collaboration mode: code. Keep execution autonomous. Do not ask the user follow-up questions and avoid requestUserInput / askuserquestion interactions. If details are missing, make minimal reasonable assumptions, proceed, and report assumptions briefly."
+            "Execution policy (default mode): keep execution autonomous. Do not ask the user follow-up questions and avoid requestUserInput / askuserquestion interactions. If details are missing, make minimal reasonable assumptions, proceed, and report assumptions briefly."
                 .to_string(),
         ]
     } else {
         vec![
-            "Collaboration mode: plan. Clarification via requestUserInput / askuserquestion is allowed when needed."
+            "Execution policy (plan mode): work in planning-only style. You MAY inspect files and run read-only checks, but MUST NOT apply file edits or execute repository-mutating operations."
+                .to_string(),
+            "Execution policy (plan mode): if a blocker appears (missing path/context, ambiguous scope, permission gap, or any prerequisite failure), you MUST immediately stop further work, call requestUserInput / askuserquestion with concrete options, and WAIT for user input before continuing. Do not silently continue with assumptions."
+                .to_string(),
+            "Execution policy (plan mode): when you need extra user information (for example path, credentials, env value, target scope, preference, or any missing input), you MUST ask via requestUserInput / askuserquestion. Plain-text follow-up questions are NOT allowed."
                 .to_string(),
         ]
     }
@@ -175,10 +180,13 @@ pub(crate) fn apply_policy_to_collaboration_mode(
             "request_user_input_policy": policy.request_user_input_policy.as_str(),
         }),
     );
-    root.insert(
-        "mode".to_string(),
-        Value::String(policy.effective_mode.clone()),
-    );
+    let wire_mode = if policy.effective_mode == "plan" {
+        "plan"
+    } else {
+        // codex app-server v2 uses "default" as the non-plan mode enum.
+        "default"
+    };
+    root.insert("mode".to_string(), Value::String(wire_mode.to_string()));
     root.insert(
         "selectedMode".to_string(),
         Value::String(
@@ -211,8 +219,8 @@ pub(crate) fn apply_policy_to_collaboration_mode(
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_policy_to_collaboration_mode, normalize_mode, resolve_policy, RequestUserInputPolicy,
-        COLLABORATION_POLICY_VERSION,
+        apply_policy_to_collaboration_mode, build_policy_directives, normalize_mode,
+        resolve_policy, RequestUserInputPolicy, COLLABORATION_POLICY_VERSION,
     };
     use serde_json::json;
 
@@ -220,6 +228,7 @@ mod tests {
     fn normalize_mode_accepts_plan_and_code() {
         assert_eq!(normalize_mode(Some("plan")), Some("plan".to_string()));
         assert_eq!(normalize_mode(Some(" CODE ")), Some("code".to_string()));
+        assert_eq!(normalize_mode(Some("default")), Some("code".to_string()));
         assert_eq!(normalize_mode(Some("unknown")), None);
         assert_eq!(normalize_mode(None), None);
     }
@@ -260,7 +269,7 @@ mod tests {
         });
         let policy = resolve_policy(Some(&json!({ "mode": "code" })), None);
         let enriched = apply_policy_to_collaboration_mode(Some(payload), &policy);
-        assert_eq!(enriched["mode"], "code");
+        assert_eq!(enriched["mode"], "default");
         assert_eq!(enriched["selectedMode"], "code");
         assert_eq!(enriched["effectiveMode"], "code");
         assert_eq!(enriched["policyVersion"], COLLABORATION_POLICY_VERSION);
@@ -273,6 +282,31 @@ mod tests {
             .as_str()
             .unwrap_or("");
         assert!(merged_instructions.contains("Keep answers concise."));
-        assert!(merged_instructions.contains("Collaboration mode: code"));
+        assert!(merged_instructions.contains("Execution policy (default mode)"));
+    }
+
+    #[test]
+    fn plan_mode_directives_require_blocker_question_flow() {
+        let directives = build_policy_directives("plan");
+        let merged = directives.join("\n");
+        assert!(merged.contains("Execution policy (plan mode):"));
+        assert!(merged.contains("MUST immediately stop further work"));
+        assert!(merged.contains("call requestUserInput / askuserquestion"));
+        assert!(merged.contains("WAIT for user input"));
+        assert!(merged.contains("Plain-text follow-up questions are NOT allowed"));
+    }
+
+    #[test]
+    fn resolve_policy_defaults_to_code_when_mode_missing() {
+        let policy = resolve_policy(None, None);
+        assert_eq!(policy.effective_mode, "code");
+        assert_eq!(
+            policy.fallback_reason.as_deref(),
+            Some("missing_mode_in_request_default_code")
+        );
+        assert_eq!(
+            policy.request_user_input_policy,
+            RequestUserInputPolicy::Block
+        );
     }
 }

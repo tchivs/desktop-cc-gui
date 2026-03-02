@@ -282,6 +282,7 @@ export type CollaborationModeBlockedParams = {
   thread_id: string;
   blocked_method: string;
   effective_mode: string;
+  reason_code?: string;
   reason: string;
   suggestion?: string;
   request_id?: number | string | null;
@@ -290,6 +291,19 @@ export type CollaborationModeBlockedParams = {
 export type CollaborationModeBlockedRequest = {
   workspace_id: string;
   params: CollaborationModeBlockedParams;
+};
+
+export type CollaborationModeResolvedParams = {
+  thread_id: string;
+  selected_ui_mode: "plan" | "default";
+  effective_runtime_mode: "plan" | "code";
+  effective_ui_mode: "plan" | "default";
+  fallback_reason?: string | null;
+};
+
+export type CollaborationModeResolvedRequest = {
+  workspace_id: string;
+  params: CollaborationModeResolvedParams;
 };
 
 export type RequestUserInputAnswer = {
@@ -628,6 +642,10 @@ export type MessageSendOptions = {
   selectedMemoryIds?: string[];
   selectedMemoryInjectionMode?: MemoryContextInjectionMode;
   selectedAgent?: SelectedAgentOption | null;
+  model?: string | null;
+  effort?: string | null;
+  collaborationMode?: Record<string, unknown> | null;
+  accessMode?: AccessMode;
 };
 
 export type SelectedAgentOption = {

@@ -36,6 +36,7 @@ import {
 import { buildCommandSummary } from "./toolBlocks/toolConstants";
 import { MEMORY_CONTEXT_SUMMARY_PREFIX } from "../../project-memory/utils/memoryMarkers";
 import type { PresentationProfile } from "../presentation/presentationProfile";
+import { RequestUserInputMessage } from "../../app/components/RequestUserInputMessage";
 
 
 type MessagesProps = {
@@ -139,7 +140,9 @@ const LEGACY_MEMORY_RECORD_HINT_REGEX =
   /(?:用户输入[:：]|助手输出摘要[:：]|助手输出[:：])/;
 const PROJECT_MEMORY_XML_PREFIX_REGEX =
   /^<project-memory\b[^>]*>([\s\S]*?)<\/project-memory>\s*/i;
-const CODE_MODE_FALLBACK_MARKER_REGEX = /User request\s*:\s*/i;
+const MODE_FALLBACK_MARKER_REGEX = /User request\s*:\s*/i;
+const MODE_FALLBACK_PREFIX_REGEX =
+  /^(?:collaboration mode:\s*code\.|execution policy \(default mode\):|execution policy \(plan mode\):)/i;
 const MESSAGES_PERF_DEBUG_FLAG_KEY = "mossx.debug.messages.perf";
 const MESSAGES_SLOW_RENDER_WARN_MS = 18;
 const MESSAGES_SLOW_ANCHOR_WARN_MS = 8;
@@ -175,21 +178,24 @@ function normalizeCollaborationModeId(
   return null;
 }
 
-function extractFallbackCodeUserInput(
+function extractModeFallbackUserInput(
   text: string,
-): { text: string; mode: "code" | null } {
+): { text: string; mode: "code" | "plan" | null } {
   const trimmed = text.trimStart();
-  if (!trimmed.toLowerCase().startsWith("collaboration mode: code.")) {
+  if (!MODE_FALLBACK_PREFIX_REGEX.test(trimmed)) {
     return { text, mode: null };
   }
-  const markerMatch = CODE_MODE_FALLBACK_MARKER_REGEX.exec(text);
+  const mode: "code" | "plan" = /^execution policy \(plan mode\):/i.test(trimmed)
+    ? "plan"
+    : "code";
+  const markerMatch = MODE_FALLBACK_MARKER_REGEX.exec(text);
   if (!markerMatch || markerMatch.index < 0) {
-    return { text, mode: "code" };
+    return { text, mode };
   }
   const extracted = text
     .slice(markerMatch.index + markerMatch[0].length)
     .trim();
-  return { text: extracted || text, mode: "code" };
+  return { text: extracted || text, mode };
 }
 
 function toConversationEngine(
@@ -930,7 +936,6 @@ const WorkingIndicator = memo(function WorkingIndicator({
 const MessageRow = memo(function MessageRow({
   item,
   activeEngine = "claude",
-  activeCollaborationModeId = null,
   enableCollaborationBadge = false,
   presentationProfile = null,
   isCopied,
@@ -960,7 +965,7 @@ const MessageRow = memo(function MessageRow({
       return memorySummary ? "" : originalText;
     }
     const safeText = enableCollaborationBadge
-      ? extractFallbackCodeUserInput(originalText).text
+      ? extractModeFallbackUserInput(originalText).text
       : originalText;
     const userInputMatches = [...safeText.matchAll(/\[User Input\]\s*/g)];
     if (userInputMatches.length === 0) {
@@ -979,17 +984,16 @@ const MessageRow = memo(function MessageRow({
     if (!enableCollaborationBadge || item.role !== "user") {
       return null;
     }
-    const fallbackMode = extractFallbackCodeUserInput(item.text).mode;
+    const itemMode = normalizeCollaborationModeId(item.collaborationMode);
+    if (itemMode) {
+      return itemMode;
+    }
+    const fallbackMode = extractModeFallbackUserInput(item.text).mode;
     if (fallbackMode) {
       return fallbackMode;
     }
-    return (
-      normalizeCollaborationModeId(item.collaborationMode) ??
-      normalizeCollaborationModeId(activeCollaborationModeId) ??
-      null
-    );
+    return null;
   }, [
-    activeCollaborationModeId,
     enableCollaborationBadge,
     item.collaborationMode,
     item.role,
@@ -1264,7 +1268,7 @@ export const Messages = memo(function Messages({
   showMessageAnchors = true,
   codeBlockCopyUseModifier = false,
   userInputRequests: legacyUserInputRequests = [],
-  onUserInputSubmit: _legacyOnUserInputSubmit,
+  onUserInputSubmit: legacyOnUserInputSubmit,
   activeEngine: legacyActiveEngine = "claude",
   activeCollaborationModeId = null,
   plan: legacyPlan = null,
@@ -1828,9 +1832,17 @@ export const Messages = memo(function Messages({
 
   const groupedEntries = useMemo(() => groupToolItems(renderedItems), [renderedItems]);
 
-  // User input requests are now rendered as a top-level modal dialog
-  // (AskUserQuestionDialog mounted in App.tsx) instead of inline.
-  const userInputNode = null;
+  const userInputNode =
+    activeEngine === "codex" && legacyOnUserInputSubmit
+      ? (
+        <RequestUserInputMessage
+          requests={userInputRequests}
+          activeThreadId={threadId ?? null}
+          activeWorkspaceId={workspaceId ?? null}
+          onSubmit={legacyOnUserInputSubmit}
+        />
+      )
+      : null;
 
   const renderSingleItem = (item: ConversationItem) => {
     if (item.kind === "message") {

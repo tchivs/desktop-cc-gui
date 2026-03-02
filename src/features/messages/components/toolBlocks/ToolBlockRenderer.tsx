@@ -18,6 +18,7 @@ import { EditToolBlock } from './EditToolBlock';
 import { BashToolBlock } from './BashToolBlock';
 import { SearchToolBlock } from './SearchToolBlock';
 import { McpToolBlock } from './McpToolBlock';
+import { RequestUserInputSubmittedBlock } from './RequestUserInputSubmittedBlock';
 
 interface ToolBlockRendererProps {
   item: Extract<ConversationItem, { kind: 'tool' }>;
@@ -40,6 +41,11 @@ export const ToolBlockRenderer = memo(function ToolBlockRenderer({
 }: ToolBlockRendererProps) {
   const toolName = extractToolName(item.title);
   const lower = toolName.toLowerCase();
+
+  // 0. 已提交的 request user input 历史卡片
+  if (item.toolType === 'requestUserInputSubmitted') {
+    return <RequestUserInputSubmittedBlock item={item} />;
+  }
 
   // 1. 命令执行工具
   if (item.toolType === 'commandExecution' || isBashTool(lower)) {

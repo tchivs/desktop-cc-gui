@@ -54,6 +54,45 @@ fn build_writable_roots(workspace_path: &str, custom_spec_root: Option<&str>) ->
     writable_roots
 }
 
+fn resolve_execution_policy(
+    access_mode: &str,
+    workspace_path: &str,
+    custom_spec_root: Option<&str>,
+    effective_mode: &str,
+    mode_enforcement_enabled: bool,
+) -> (Value, &'static str, Option<&'static str>) {
+    let mut sandbox_policy = match access_mode {
+        "full-access" => json!({ "type": "dangerFullAccess" }),
+        "read-only" => json!({ "type": "readOnly" }),
+        _ => {
+            let writable_roots = build_writable_roots(workspace_path, custom_spec_root);
+            json!({
+                "type": "workspaceWrite",
+                "writableRoots": writable_roots,
+                "networkAccess": true
+            })
+        }
+    };
+
+    let mut approval_policy = if access_mode == "full-access" {
+        "never"
+    } else {
+        "on-request"
+    };
+
+    if mode_enforcement_enabled && effective_mode == "plan" {
+        sandbox_policy = json!({ "type": "readOnly" });
+        approval_policy = "on-request";
+        return (
+            sandbox_policy,
+            approval_policy,
+            Some("plan_readonly_violation"),
+        );
+    }
+
+    (sandbox_policy, approval_policy, None)
+}
+
 fn extract_thread_id_from_response(value: &Value) -> Option<String> {
     value
         .get("result")
@@ -167,9 +206,10 @@ fn is_collaboration_mode_capability_error(value: &Value) -> bool {
         && message.contains("capability")
 }
 
-const CODE_MODE_FALLBACK_DIRECTIVE: &str = "Collaboration mode: code. Do not ask the user follow-up questions. If details are missing, make minimal reasonable assumptions, proceed autonomously, and report assumptions briefly.";
+const CODE_MODE_FALLBACK_DIRECTIVE: &str = "Execution policy (default mode): do not ask the user follow-up questions. If details are missing, make minimal reasonable assumptions, proceed autonomously, and report assumptions briefly.";
+const PLAN_MODE_FALLBACK_DIRECTIVE: &str = "Execution policy (plan mode fallback): planning-only. Experimental ask-user-input APIs are not available in this session. If a blocker appears (missing path/context, ambiguous scope, permission gap, or prerequisite failure), ask a concise multiple-choice question in plain assistant text, stop, and WAIT for user input before continuing.";
 
-fn inject_code_mode_fallback_prompt(input: &mut Vec<Value>) {
+fn inject_fallback_prompt_with_directive(input: &mut Vec<Value>, directive: &str) {
     if let Some(text_item) = input.iter_mut().find(|item| {
         item.get("type")
             .and_then(Value::as_str)
@@ -182,9 +222,9 @@ fn inject_code_mode_fallback_prompt(input: &mut Vec<Value>) {
             .unwrap_or_default()
             .trim();
         let merged_text = if original_text.is_empty() {
-            CODE_MODE_FALLBACK_DIRECTIVE.to_string()
+            directive.to_string()
         } else {
-            format!("{CODE_MODE_FALLBACK_DIRECTIVE}\n\nUser request:\n{original_text}")
+            format!("{directive}\n\nUser request:\n{original_text}")
         };
         if let Some(obj) = text_item.as_object_mut() {
             obj.insert("text".to_string(), Value::String(merged_text));
@@ -196,9 +236,25 @@ fn inject_code_mode_fallback_prompt(input: &mut Vec<Value>) {
         0,
         json!({
             "type": "text",
-            "text": CODE_MODE_FALLBACK_DIRECTIVE,
+            "text": directive,
         }),
     );
+}
+
+fn inject_code_mode_fallback_prompt(input: &mut Vec<Value>) {
+    inject_fallback_prompt_with_directive(input, CODE_MODE_FALLBACK_DIRECTIVE);
+}
+
+fn inject_plan_mode_fallback_prompt(input: &mut Vec<Value>) {
+    inject_fallback_prompt_with_directive(input, PLAN_MODE_FALLBACK_DIRECTIVE);
+}
+
+fn inject_mode_fallback_prompt(input: &mut Vec<Value>, effective_mode: &str) {
+    if effective_mode == "code" {
+        inject_code_mode_fallback_prompt(input);
+    } else {
+        inject_plan_mode_fallback_prompt(input);
+    }
 }
 
 async fn get_session_clone(
@@ -350,26 +406,6 @@ pub(crate) async fn send_user_message_core(
     let normalized_language = normalize_preferred_language(preferred_language.as_deref());
     let normalized_custom_spec_root = normalize_custom_spec_root(custom_spec_root.as_deref());
     let access_mode = access_mode.unwrap_or_else(|| "current".to_string());
-    let sandbox_policy = match access_mode.as_str() {
-        "full-access" => json!({ "type": "dangerFullAccess" }),
-        "read-only" => json!({ "type": "readOnly" }),
-        _ => {
-            let writable_roots =
-                build_writable_roots(&session.entry.path, normalized_custom_spec_root.as_deref());
-            json!({
-                "type": "workspaceWrite",
-                "writableRoots": writable_roots,
-                "networkAccess": true
-            })
-        }
-    };
-
-    let approval_policy = if access_mode == "full-access" {
-        "never"
-    } else {
-        "on-request"
-    };
-
     let trimmed_text = text.trim();
     let mut input: Vec<Value> = Vec::new();
     if !trimmed_text.is_empty() {
@@ -395,6 +431,25 @@ pub(crate) async fn send_user_message_core(
         return Err("empty user message".to_string());
     }
 
+    let persisted_mode = session.get_thread_effective_mode(&thread_id).await;
+    let policy = resolve_policy(collaboration_mode.as_ref(), persisted_mode.as_deref());
+    let (sandbox_policy, approval_policy, enforcement_reason) = resolve_execution_policy(
+        access_mode.as_str(),
+        &session.entry.path,
+        normalized_custom_spec_root.as_deref(),
+        &policy.effective_mode,
+        mode_enforcement_enabled,
+    );
+    if let Some(reason) = enforcement_reason {
+        log::info!(
+            "[collaboration_mode_enforcement] decision=override_execution_policy workspace_id={} thread_id={} effective_mode={} requested_access_mode={} sandbox_policy=readOnly approval_policy=on-request reason={}",
+            workspace_id,
+            thread_id,
+            policy.effective_mode,
+            access_mode,
+            reason
+        );
+    }
     let mut params = Map::new();
     params.insert("threadId".to_string(), json!(thread_id));
     params.insert("cwd".to_string(), json!(session.entry.path));
@@ -402,16 +457,12 @@ pub(crate) async fn send_user_message_core(
     params.insert("sandboxPolicy".to_string(), json!(sandbox_policy));
     params.insert("model".to_string(), json!(model));
     params.insert("effort".to_string(), json!(effort));
-    let has_explicit_collaboration_mode = collaboration_mode
-        .as_ref()
-        .map(|value| !value.is_null())
-        .unwrap_or(false);
-    let persisted_mode = session.get_thread_effective_mode(&thread_id).await;
-    let policy = resolve_policy(collaboration_mode.as_ref(), persisted_mode.as_deref());
-    let can_send_collaboration_mode =
-        has_explicit_collaboration_mode && session.collaboration_mode_supported();
-    if !can_send_collaboration_mode && policy.effective_mode == "code" {
-        inject_code_mode_fallback_prompt(&mut input);
+    // Keep wire mode aligned with runtime policy on every turn.
+    // If some frontend path misses explicit collaborationMode once, the backend
+    // still enforces and persists the effective mode for this thread.
+    let can_send_collaboration_mode = session.collaboration_mode_supported();
+    if !can_send_collaboration_mode {
+        inject_mode_fallback_prompt(&mut input, &policy.effective_mode);
     }
     params.insert("input".to_string(), json!(input));
     if can_send_collaboration_mode {
@@ -456,6 +507,9 @@ pub(crate) async fn send_user_message_core(
         );
         session.set_collaboration_mode_supported(false);
         params.remove("collaborationMode");
+        if let Some(Value::Array(input_items)) = params.get_mut("input") {
+            inject_mode_fallback_prompt(input_items, &policy.effective_mode);
+        }
         return session
             .send_request("turn/start", Value::Object(params))
             .await;
@@ -468,8 +522,9 @@ mod tests {
     use super::{
         build_writable_roots, ensure_collaboration_mode_defaults,
         extract_parent_thread_id_from_response, extract_thread_id_from_response,
-        inject_code_mode_fallback_prompt, is_collaboration_mode_capability_error,
-        normalize_custom_spec_root, normalize_preferred_language,
+        inject_code_mode_fallback_prompt, inject_plan_mode_fallback_prompt,
+        is_collaboration_mode_capability_error, normalize_custom_spec_root,
+        normalize_preferred_language, resolve_execution_policy,
     };
     use serde_json::{json, Value};
 
@@ -519,6 +574,55 @@ mod tests {
     fn build_writable_roots_keeps_workspace_when_custom_missing() {
         let roots = build_writable_roots("/workspace/repo", None);
         assert_eq!(roots, vec!["/workspace/repo".to_string()]);
+    }
+
+    #[test]
+    fn resolve_execution_policy_keeps_default_code_path() {
+        let (sandbox, approval, reason) = resolve_execution_policy(
+            "full-access",
+            "/workspace/repo",
+            None,
+            "code",
+            true,
+        );
+        assert_eq!(sandbox, json!({ "type": "dangerFullAccess" }));
+        assert_eq!(approval, "never");
+        assert_eq!(reason, None);
+    }
+
+    #[test]
+    fn resolve_execution_policy_enforces_plan_readonly_when_enabled() {
+        let (sandbox, approval, reason) = resolve_execution_policy(
+            "full-access",
+            "/workspace/repo",
+            Some("/external/openspec"),
+            "plan",
+            true,
+        );
+        assert_eq!(sandbox, json!({ "type": "readOnly" }));
+        assert_eq!(approval, "on-request");
+        assert_eq!(reason, Some("plan_readonly_violation"));
+    }
+
+    #[test]
+    fn resolve_execution_policy_does_not_override_when_enforcement_disabled() {
+        let (sandbox, approval, reason) = resolve_execution_policy(
+            "current",
+            "/workspace/repo",
+            Some("/external/openspec"),
+            "plan",
+            false,
+        );
+        assert_eq!(
+            sandbox,
+            json!({
+                "type": "workspaceWrite",
+                "writableRoots": ["/external/openspec", "/workspace/repo"],
+                "networkAccess": true
+            })
+        );
+        assert_eq!(approval, "on-request");
+        assert_eq!(reason, None);
     }
 
     #[test]
@@ -610,7 +714,7 @@ mod tests {
             .get("text")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        assert!(text.contains("Collaboration mode: code."));
+        assert!(text.contains("Execution policy (default mode):"));
         assert!(text.contains("User request:\nImplement the feature end-to-end."));
     }
 
@@ -624,6 +728,34 @@ mod tests {
         assert_eq!(input.len(), 2);
         assert_eq!(input[0]["type"], "text");
     }
+
+    #[test]
+    fn inject_plan_mode_fallback_prompt_prefixes_existing_text() {
+        let mut input = vec![json!({
+            "type": "text",
+            "text": "先扫目录并确认改动范围。"
+        })];
+        inject_plan_mode_fallback_prompt(&mut input);
+        let text = input[0]
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(text.contains("Execution policy (plan mode fallback):"));
+        assert!(text.contains("ask a concise multiple-choice question in plain assistant text"));
+        assert!(text.contains("User request:\n先扫目录并确认改动范围。"));
+    }
+
+    #[test]
+    fn inject_plan_mode_fallback_prompt_adds_text_for_image_only_input() {
+        let mut input = vec![json!({
+            "type": "localImage",
+            "path": "/tmp/demo.png"
+        })];
+        inject_plan_mode_fallback_prompt(&mut input);
+        assert_eq!(input.len(), 2);
+        assert_eq!(input[0]["type"], "text");
+    }
+
 }
 
 pub(crate) async fn collaboration_mode_list_core(
@@ -887,6 +1019,14 @@ pub(crate) async fn respond_to_server_request_core(
     result: Value,
 ) -> Result<(), String> {
     let session = get_session_clone(sessions, &workspace_id).await?;
+    if let Some(local_request_id) = request_id.as_str() {
+        if session
+            .consume_local_user_input_request(local_request_id)
+            .await
+        {
+            return Ok(());
+        }
+    }
     session.send_response(request_id, result).await
 }
 

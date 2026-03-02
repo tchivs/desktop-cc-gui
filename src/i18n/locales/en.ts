@@ -2713,6 +2713,7 @@ const en = {
     hideSecret: "Hide",
     submitFailed: "Submit failed. Please retry.",
     submit: "Submit",
+    submitted: "Submitted",
   },
 
   askUserQuestion: {

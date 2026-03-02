@@ -83,6 +83,16 @@ describe('AskUserQuestionDialog', () => {
     expect(screen.getByText('Pick one')).toBeTruthy();
   });
 
+  it('renders request with empty thread_id on active workspace', () => {
+    renderDialog({
+      activeThreadId: 'thread-active',
+      activeWorkspaceId: 'ws-1',
+      requests: [makeRequest({ threadId: '' })],
+    });
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    expect(screen.getByText('Pick one')).toBeTruthy();
+  });
+
   it('renders option labels', () => {
     renderDialog();
     expect(screen.getByText('Option A')).toBeTruthy();
@@ -194,5 +204,35 @@ describe('AskUserQuestionDialog', () => {
     const textarea = screen.getByPlaceholderText('approval.typeAnswerOptional');
     expect(textarea).toBeTruthy();
     expect(textarea.tagName.toLowerCase()).toBe('textarea');
+  });
+
+  it('uses composer overlay only for codex plan blocker question', () => {
+    const blockerQuestion: RequestUserInputRequest['params']['questions'] = [
+      {
+        id: 'plan_blocker_resolution',
+        header: 'Plan blocker',
+        question: 'Need your decision',
+        options: [{ label: 'A', description: '' }],
+      },
+    ];
+
+    const { unmount } = renderDialog({
+      requests: [makeRequest({ questions: blockerQuestion })],
+      activeEngine: 'codex',
+    });
+    let overlay = document.querySelector('.ask-user-question-overlay');
+    let card = document.querySelector('.ask-user-question-card');
+    expect(overlay?.classList.contains('is-composer-overlay')).toBe(true);
+    expect(card?.classList.contains('is-composer-overlay')).toBe(true);
+    unmount();
+
+    renderDialog({
+      requests: [makeRequest({ questions: blockerQuestion })],
+      activeEngine: 'claude',
+    });
+    overlay = document.querySelector('.ask-user-question-overlay');
+    card = document.querySelector('.ask-user-question-card');
+    expect(overlay?.classList.contains('is-composer-overlay')).toBe(false);
+    expect(card?.classList.contains('is-composer-overlay')).toBe(false);
   });
 });

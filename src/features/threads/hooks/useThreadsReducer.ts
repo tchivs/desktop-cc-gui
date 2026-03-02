@@ -2022,6 +2022,21 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
         };
         delete newHiddenThreadIdsByWorkspace[workspaceId][oldThreadId];
       }
+      const newUserInputRequests = state.userInputRequests.map((request) => {
+        if (
+          request.workspace_id !== workspaceId ||
+          request.params.thread_id !== oldThreadId
+        ) {
+          return request;
+        }
+        return {
+          ...request,
+          params: {
+            ...request.params,
+            thread_id: newThreadId,
+          },
+        };
+      });
 
       return {
         ...state,
@@ -2036,6 +2051,7 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
         agentSegmentByThread: newAgentSegmentByThread,
         threadParentById: newThreadParentById,
         hiddenThreadIdsByWorkspace: newHiddenThreadIdsByWorkspace,
+        userInputRequests: newUserInputRequests,
       };
     }
     case "appendReasoningSummary": {

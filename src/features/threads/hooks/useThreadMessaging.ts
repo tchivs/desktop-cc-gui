@@ -85,6 +85,9 @@ function normalizeCollaborationModeId(
     return null;
   }
   const normalized = value.trim().toLowerCase();
+  if (normalized === "default") {
+    return "code";
+  }
   return normalized === "plan" || normalized === "code"
     ? normalized
     : null;
@@ -336,6 +339,9 @@ type UseThreadMessagingOptions = {
     workspacePath: string | null;
     engine: string | null;
   }) => void;
+  resolveCollaborationRuntimeMode?: (
+    threadId: string,
+  ) => "plan" | "code" | null;
 };
 
 export function useThreadMessaging({
@@ -374,6 +380,7 @@ export function useThreadMessaging({
   resolveOpenCodeVariant,
   autoNameThread,
   onInputMemoryCaptured,
+  resolveCollaborationRuntimeMode,
 }: UseThreadMessagingOptions) {
   const { t, i18n } = useTranslation();
   const lastOpenCodeModelByThreadRef = useRef<Map<string, string>>(new Map());
@@ -1435,15 +1442,9 @@ export function useThreadMessaging({
         return resetAt ? formatRelativeTime(resetAt) : null;
       };
 
-      const collabId =
-        collaborationMode &&
-        typeof collaborationMode === "object" &&
-        "settings" in collaborationMode &&
-        collaborationMode.settings &&
-        typeof collaborationMode.settings === "object" &&
-        "id" in collaborationMode.settings
-          ? String(collaborationMode.settings.id ?? "")
-          : "";
+      const collaborationModeId = resolveCollaborationModeIdFromPayload(
+        collaborationMode,
+      );
 
       const formatLimitLine = (
         label: string,
@@ -1470,7 +1471,8 @@ export function useThreadMessaging({
           : accessMode === "full-access"
             ? "Full Access"
             : "Default";
-      const collaborationLabel = collabId || "Default";
+      const collaborationLabel =
+        collaborationModeId === "plan" ? "Plan Mode" : "Default";
       const sessionLabel = threadId.startsWith("opencode:")
         ? threadId.slice("opencode:".length)
         : threadId;
@@ -1522,6 +1524,56 @@ export function useThreadMessaging({
       rateLimitsByWorkspace,
       recordThreadActivity,
       resolveThreadEngine,
+      safeMessageActivity,
+    ],
+  );
+
+  const startMode = useCallback(
+    async (_text: string) => {
+      if (!activeWorkspace) {
+        return;
+      }
+      const threadId = await ensureThreadForActiveWorkspace();
+      if (!threadId) {
+        return;
+      }
+      const selectedMode = resolveCollaborationModeIdFromPayload(
+        collaborationMode,
+      );
+      const uiMode: "plan" | "default" =
+        selectedMode === "plan" ? "plan" : "default";
+      const runtimeMode =
+        resolveCollaborationRuntimeMode?.(threadId) ??
+        (selectedMode === "plan" ? "plan" : "code");
+      const normalizedRuntimeMode: "plan" | "code" =
+        runtimeMode === "plan" ? "plan" : "code";
+      const uiModeLabel = uiMode === "plan" ? "Plan Mode（计划模式）" : "Default（默认模式）";
+      const timestamp = Date.now();
+      recordThreadActivity(activeWorkspace.id, threadId, timestamp);
+      dispatch({
+        type: "addAssistantMessage",
+        threadId,
+        text: [
+          "```text",
+          `当前产品模式: ${uiModeLabel}`,
+          `运行时模式: ${normalizedRuntimeMode}`,
+          `线程: ${threadId}`,
+          "",
+          "说明:",
+          "- 这里的模式仅表示 Codex 产品能力（Plan/Default）。",
+          "- AGENTS.md / PlanFirst 规则仍会照常读取，不会被该开关切换或关闭。",
+          "```",
+        ].join("\n"),
+      });
+      safeMessageActivity();
+    },
+    [
+      activeWorkspace,
+      collaborationMode,
+      dispatch,
+      ensureThreadForActiveWorkspace,
+      recordThreadActivity,
+      resolveCollaborationRuntimeMode,
       safeMessageActivity,
     ],
   );
@@ -2178,6 +2230,7 @@ export function useThreadMessaging({
     startMcp,
     startSpecRoot,
     startStatus,
+    startMode,
     startExport,
     startImport,
     startLsp,

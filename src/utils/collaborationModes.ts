@@ -14,7 +14,7 @@ export function formatCollaborationModeLabel(value: string) {
     return "Pair Programming";
   }
   if (lower === "plan") {
-    return "Plan";
+    return "Plan Mode";
   }
   if (lower === "execute") {
     return "Execute";
@@ -23,7 +23,7 @@ export function formatCollaborationModeLabel(value: string) {
     return "Custom";
   }
   if (lower === "code") {
-    return "Code";
+    return "Default";
   }
   return normalized
     .split(" ")

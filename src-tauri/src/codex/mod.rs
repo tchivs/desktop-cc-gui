@@ -421,6 +421,28 @@ pub(crate) async fn send_user_message(
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<Value, String> {
+    let selected_mode = collaboration_mode
+        .as_ref()
+        .and_then(|value| {
+            if let Some(text) = value.as_str() {
+                return Some(text.to_string());
+            }
+            value
+                .as_object()
+                .and_then(|object| object.get("mode").or_else(|| object.get("id")))
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+        })
+        .map(|mode| {
+            let normalized = mode.trim().to_lowercase();
+            if normalized == "default" {
+                "code".to_string()
+            } else {
+                normalized
+            }
+        })
+        .filter(|mode| mode == "plan" || mode == "code");
+
     if remote_backend::is_remote_mode(&*state).await {
         let images = images.map(|paths| {
             paths
@@ -464,10 +486,10 @@ pub(crate) async fn send_user_message(
         settings.codex_mode_enforcement_enabled
     };
 
-    codex_core::send_user_message_core(
+    let response = codex_core::send_user_message_core(
         &state.sessions,
-        workspace_id,
-        thread_id,
+        workspace_id.clone(),
+        thread_id.clone(),
         text,
         model,
         effort,
@@ -478,7 +500,60 @@ pub(crate) async fn send_user_message(
         custom_spec_root,
         mode_enforcement_enabled,
     )
-    .await
+    .await?;
+
+    let session = {
+        let sessions = state.sessions.lock().await;
+        sessions.get(&workspace_id).cloned()
+    };
+    let (effective_runtime_mode, fallback_reason) = if let Some(session) = session {
+        let runtime_mode = session
+            .get_thread_effective_mode(&thread_id)
+            .await
+            .unwrap_or_else(|| "code".to_string());
+        let fallback_reason = if selected_mode.is_some() && !session.collaboration_mode_supported()
+        {
+            Some("collaboration_mode_capability_unsupported_prompt_fallback")
+        } else {
+            None
+        };
+        (runtime_mode, fallback_reason)
+    } else {
+        ("code".to_string(), None)
+    };
+    let effective_ui_mode = if effective_runtime_mode == "plan" {
+        "plan"
+    } else {
+        "default"
+    };
+    let selected_ui_mode = match selected_mode.as_deref() {
+        Some("plan") => "plan",
+        Some("code") => "default",
+        _ => effective_ui_mode,
+    };
+    let _ = app.emit(
+        "app-server-event",
+        AppServerEvent {
+            workspace_id: workspace_id.clone(),
+            message: json!({
+                "method": "collaboration/modeResolved",
+                "params": {
+                    "threadId": thread_id.clone(),
+                    "thread_id": thread_id,
+                    "selectedUiMode": selected_ui_mode,
+                    "selected_ui_mode": selected_ui_mode,
+                    "effectiveRuntimeMode": effective_runtime_mode.clone(),
+                    "effective_runtime_mode": effective_runtime_mode,
+                    "effectiveUiMode": effective_ui_mode,
+                    "effective_ui_mode": effective_ui_mode,
+                    "fallbackReason": fallback_reason,
+                    "fallback_reason": fallback_reason
+                }
+            }),
+        },
+    );
+
+    Ok(response)
 }
 
 #[tauri::command]

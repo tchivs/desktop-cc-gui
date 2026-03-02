@@ -107,4 +107,18 @@ describe('ConfigSelect usage entry', () => {
       expect(container.querySelector('.selector-option-plan-mode')).toBeFalsy();
     });
   });
+
+  it('defaults plan mode switch to off when mode is unset', async () => {
+    const { container } = render(
+      <ConfigSelect
+        currentProvider="codex"
+        onProviderChange={() => {}}
+      />,
+    );
+
+    fireEvent.click(container.querySelector('.config-button') as HTMLElement);
+    const planSwitch = container.querySelector('.selector-option-plan-mode .ant-switch');
+    expect(planSwitch).toBeTruthy();
+    expect(planSwitch?.classList.contains('ant-switch-checked')).toBe(false);
+  });
 });

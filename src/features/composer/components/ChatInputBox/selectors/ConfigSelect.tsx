@@ -97,7 +97,7 @@ export const ConfigSelect = ({
   }));
   const currentProviderInfo = providers.find((p) => p.id === providerId) || providers[0];
   const isCodexProvider = providerId === 'codex';
-  const isPlanModeEnabled = (selectedCollaborationModeId ?? 'plan') === 'plan';
+  const isPlanModeEnabled = (selectedCollaborationModeId ?? 'code') === 'plan';
 
   const handlePlanModeToggle = useCallback(
     (enabled: boolean) => {

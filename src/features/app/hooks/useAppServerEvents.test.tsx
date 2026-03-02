@@ -63,6 +63,7 @@ describe("useAppServerEvents", () => {
       onApprovalRequest: vi.fn(),
       onRequestUserInput: vi.fn(),
       onModeBlocked: vi.fn(),
+      onModeResolved: vi.fn(),
       onItemUpdated: vi.fn(),
       onItemCompleted: vi.fn(),
       onAgentMessageCompleted: vi.fn(),
@@ -239,6 +240,32 @@ describe("useAppServerEvents", () => {
         reason: "request blocked",
         suggestion: "Switch to Plan mode",
         request_id: 92,
+      },
+    });
+
+    act(() => {
+      listener?.({
+        workspace_id: "ws-1",
+        message: {
+          method: "collaboration/modeResolved",
+          params: {
+            threadId: "thread-1",
+            selectedUiMode: "default",
+            effectiveRuntimeMode: "code",
+            effectiveUiMode: "default",
+            fallbackReason: null,
+          },
+        },
+      });
+    });
+    expect(handlers.onModeResolved).toHaveBeenCalledWith({
+      workspace_id: "ws-1",
+      params: {
+        thread_id: "thread-1",
+        selected_ui_mode: "default",
+        effective_runtime_mode: "code",
+        effective_ui_mode: "default",
+        fallback_reason: null,
       },
     });
 
@@ -433,6 +460,89 @@ describe("useAppServerEvents", () => {
             question: "Paste token",
             isOther: false,
             isSecret: true,
+            options: undefined,
+          },
+        ],
+      },
+    });
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("falls back to turn.threadId and active codex thread for user input request", async () => {
+    const handlers: Handlers = {
+      onRequestUserInput: vi.fn(),
+      getActiveCodexThreadId: vi.fn(() => "codex-active-thread"),
+    };
+    const { root } = await mount(handlers);
+
+    act(() => {
+      listener?.({
+        workspace_id: "ws-nested",
+        message: {
+          method: "item/tool/requestUserInput",
+          id: "req-nested-1",
+          params: {
+            turn: {
+              id: "turn-nested-1",
+              threadId: "thread-from-turn",
+            },
+            questions: [{ id: "q1", header: "", question: "Proceed?" }],
+          },
+        },
+      });
+    });
+
+    expect(handlers.onRequestUserInput).toHaveBeenLastCalledWith({
+      workspace_id: "ws-nested",
+      request_id: "req-nested-1",
+      params: {
+        thread_id: "thread-from-turn",
+        turn_id: "turn-nested-1",
+        item_id: "",
+        questions: [
+          {
+            id: "q1",
+            header: "",
+            question: "Proceed?",
+            isOther: false,
+            isSecret: false,
+            options: undefined,
+          },
+        ],
+      },
+    });
+
+    act(() => {
+      listener?.({
+        workspace_id: "ws-nested",
+        message: {
+          method: "item/tool/requestUserInput",
+          id: "req-nested-2",
+          params: {
+            turnId: "turn-no-thread",
+            questions: [{ id: "q2", header: "", question: "Continue?" }],
+          },
+        },
+      });
+    });
+
+    expect(handlers.onRequestUserInput).toHaveBeenLastCalledWith({
+      workspace_id: "ws-nested",
+      request_id: "req-nested-2",
+      params: {
+        thread_id: "codex-active-thread",
+        turn_id: "turn-no-thread",
+        item_id: "",
+        questions: [
+          {
+            id: "q2",
+            header: "",
+            question: "Continue?",
+            isOther: false,
+            isSecret: false,
             options: undefined,
           },
         ],

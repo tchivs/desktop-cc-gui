@@ -466,7 +466,7 @@ export const Composer = memo(function Composer({
 }: ComposerProps) {
   const { t } = useTranslation();
   const isCodexEngine = selectedEngine === "codex";
-  const showStatusPanel = selectedEngine === "claude";
+  const showStatusPanel = selectedEngine === "claude" || selectedEngine === "codex";
   const { todoTotal, subagentTotal, fileChanges, commandTotal } = useStatusPanelData(
     items,
     { isCodexEngine },

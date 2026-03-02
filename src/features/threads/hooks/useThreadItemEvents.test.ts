@@ -13,6 +13,9 @@ type ItemPayload = Record<string, unknown>;
 type SetupOverrides = {
   activeThreadId?: string | null;
   getCustomName?: (workspaceId: string, threadId: string) => string | undefined;
+  resolveCollaborationUiMode?: (
+    threadId: string,
+  ) => "plan" | "code" | null;
   onAgentMessageCompletedExternal?: (payload: {
     workspaceId: string;
     threadId: string;
@@ -30,6 +33,7 @@ const makeOptions = (overrides: SetupOverrides = {}) => {
   const applyCollabThreadLinks = vi.fn();
   const getCustomName =
     overrides.getCustomName ?? vi.fn(() => undefined);
+  const resolveCollaborationUiMode = overrides.resolveCollaborationUiMode ?? undefined;
   const interruptedThreadsRef = {
     current: new Set<string>(),
   };
@@ -41,6 +45,7 @@ const makeOptions = (overrides: SetupOverrides = {}) => {
       activeThreadId: overrides.activeThreadId ?? null,
       dispatch,
       getCustomName,
+      resolveCollaborationUiMode,
       markProcessing,
       markReviewing,
       safeMessageActivity,
@@ -316,5 +321,40 @@ describe("useThreadItemEvents", () => {
     }).not.toThrow();
 
     nowSpy.mockRestore();
+  });
+
+  it("enriches codex user messages with thread-level collaboration mode when missing", () => {
+    vi.mocked(buildConversationItem).mockReturnValue({
+      id: "user-1",
+      kind: "message",
+      role: "user",
+      text: "请先计划",
+      collaborationMode: null,
+    });
+    const { result, dispatch } = makeOptions({
+      resolveCollaborationUiMode: () => "plan",
+    });
+    const item: ItemPayload = {
+      type: "userMessage",
+      id: "user-1",
+    };
+
+    act(() => {
+      result.current.onItemStarted("ws-1", "thread-1", item);
+    });
+
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "upsertItem",
+      workspaceId: "ws-1",
+      threadId: "thread-1",
+      item: {
+        id: "user-1",
+        kind: "message",
+        role: "user",
+        text: "请先计划",
+        collaborationMode: "plan",
+      },
+      hasCustomName: false,
+    });
   });
 });

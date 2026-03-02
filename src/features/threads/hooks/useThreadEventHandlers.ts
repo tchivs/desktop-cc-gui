@@ -3,7 +3,9 @@ import type { Dispatch, MutableRefObject } from "react";
 import type {
   AppServerEvent,
   CollaborationModeBlockedRequest,
+  CollaborationModeResolvedRequest,
   DebugEntry,
+  RequestUserInputRequest,
 } from "../../../types";
 import { useThreadApprovalEvents } from "./useThreadApprovalEvents";
 import { useThreadItemEvents } from "./useThreadItemEvents";
@@ -15,6 +17,9 @@ type ThreadEventHandlersOptions = {
   activeThreadId: string | null;
   dispatch: Dispatch<ThreadAction>;
   getCustomName: (workspaceId: string, threadId: string) => string | undefined;
+  resolveCollaborationUiMode?: (
+    threadId: string,
+  ) => "plan" | "code" | null;
   isAutoTitlePending: (workspaceId: string, threadId: string) => boolean;
   isThreadHidden: (workspaceId: string, threadId: string) => boolean;
   markProcessing: (threadId: string, isProcessing: boolean) => void;
@@ -65,12 +70,16 @@ type ThreadEventHandlersOptions = {
     itemId: string;
     text: string;
   }) => void;
+  onCollaborationModeResolved?: (
+    event: CollaborationModeResolvedRequest,
+  ) => void;
 };
 
 export function useThreadEventHandlers({
   activeThreadId,
   dispatch,
   getCustomName,
+  resolveCollaborationUiMode,
   isAutoTitlePending,
   isThreadHidden,
   markProcessing,
@@ -91,6 +100,7 @@ export function useThreadEventHandlers({
   resolvePendingThreadForSession,
   renamePendingMemoryCaptureKey,
   onAgentMessageCompletedExternal,
+  onCollaborationModeResolved,
 }: ThreadEventHandlersOptions) {
   const isReasoningRawDebugEnabled = () => {
     if (import.meta.env?.DEV) {
@@ -124,7 +134,21 @@ export function useThreadEventHandlers({
     dispatch,
     approvalAllowlistRef,
   });
-  const onRequestUserInput = useThreadUserInputEvents({ dispatch });
+  const enqueueUserInputRequest = useThreadUserInputEvents({ dispatch });
+  const onRequestUserInput = useCallback(
+    (request: RequestUserInputRequest) => {
+      enqueueUserInputRequest(request);
+      const threadId = request.params.thread_id;
+      if (!threadId) {
+        return;
+      }
+      // requestUserInput means the turn is now waiting for user choice,
+      // so we should stop the spinning "processing" state immediately.
+      markProcessing(threadId, false);
+      setActiveTurnId(threadId, null);
+    },
+    [enqueueUserInputRequest, markProcessing, setActiveTurnId],
+  );
   const onModeBlocked = useCallback(
     (event: CollaborationModeBlockedRequest) => {
       const threadId = event.params.thread_id;
@@ -146,6 +170,9 @@ export function useThreadEventHandlers({
         (event.params.suggestion ?? "").trim() ||
         "Switch to Plan mode and retry if user input is required.";
       const blockedMethod = event.params.blocked_method || "item/tool/requestUserInput";
+      const blockedTitle = blockedMethod.includes("requestUserInput")
+        ? "Tool: askuserquestion"
+        : "Tool: mode policy";
       const eventId = requestId !== null && requestId !== undefined
         ? String(requestId)
         : `${Date.now()}`;
@@ -157,7 +184,7 @@ export function useThreadEventHandlers({
           id: `mode-blocked-${threadId}-${eventId}`,
           kind: "tool",
           toolType: "modeBlocked",
-          title: "Tool: askuserquestion",
+          title: blockedTitle,
           detail: blockedMethod,
           status: "completed",
           output: `${reason}\n\n${suggestion}`,
@@ -166,6 +193,13 @@ export function useThreadEventHandlers({
       });
     },
     [dispatch, getCustomName],
+  );
+
+  const onModeResolved = useCallback(
+    (event: CollaborationModeResolvedRequest) => {
+      onCollaborationModeResolved?.(event);
+    },
+    [onCollaborationModeResolved],
   );
 
   const {
@@ -184,6 +218,7 @@ export function useThreadEventHandlers({
     activeThreadId,
     dispatch,
     getCustomName,
+    resolveCollaborationUiMode,
     markProcessing,
     markReviewing,
     safeMessageActivity,
@@ -348,6 +383,7 @@ export function useThreadEventHandlers({
       onApprovalRequest,
       onRequestUserInput,
       onModeBlocked,
+      onModeResolved,
       onBackgroundThreadAction,
       onAppServerEvent,
       onAgentMessageDelta,
@@ -379,6 +415,7 @@ export function useThreadEventHandlers({
       onApprovalRequest,
       onRequestUserInput,
       onModeBlocked,
+      onModeResolved,
       onBackgroundThreadAction,
       onAppServerEvent,
       onAgentMessageDelta,
@@ -403,6 +440,7 @@ export function useThreadEventHandlers({
       onContextCompacted,
       onThreadSessionIdUpdated,
       getActiveCodexThreadId,
+      onCollaborationModeResolved,
     ],
   );
 

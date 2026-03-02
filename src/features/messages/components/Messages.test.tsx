@@ -168,13 +168,83 @@ describe("Messages", () => {
     expect((badge?.textContent ?? "").trim()).toBe("");
   });
 
-  it("shows plan badge for user message when plan mode is active", () => {
+  it("hides plan fallback prefix and keeps only actual user request", () => {
+    const items: ConversationItem[] = [
+      {
+        id: "msg-plan-fallback-1",
+        kind: "message",
+        role: "user",
+        text:
+          "Execution policy (plan mode): planning-only. If blocker appears, call requestUserInput.\n\nUser request: 先给我计划",
+      },
+    ];
+
+    const { container } = render(
+      <Messages
+        items={items}
+        threadId="thread-1"
+        workspaceId="ws-1"
+        isThinking={false}
+        activeEngine="codex"
+        openTargets={[]}
+        selectedOpenAppId=""
+      />,
+    );
+
+    const markdown = container.querySelector(".markdown");
+    const bubble = container.querySelector(
+      '.message-bubble[data-collab-mode="plan"]',
+    );
+    const badge = container.querySelector(
+      '.message-bubble[data-collab-mode="plan"] .message-mode-badge.is-plan',
+    );
+    expect(markdown?.textContent ?? "").toBe("先给我计划");
+    expect(bubble).toBeTruthy();
+    expect(badge).toBeTruthy();
+    expect((badge?.textContent ?? "").trim()).toBe("");
+  });
+
+  it("shows plan badge for user message when message mode is plan", () => {
     const items: ConversationItem[] = [
       {
         id: "msg-plan-1",
         kind: "message",
         role: "user",
         text: "请先规划步骤",
+        collaborationMode: "plan",
+      },
+    ];
+
+    const { container } = render(
+      <Messages
+        items={items}
+        threadId="thread-1"
+        workspaceId="ws-1"
+        isThinking={false}
+        activeEngine="codex"
+        openTargets={[]}
+        selectedOpenAppId=""
+      />,
+    );
+
+    const bubble = container.querySelector(
+      '.message-bubble[data-collab-mode="plan"]',
+    );
+    const badge = container.querySelector(
+      '.message-bubble[data-collab-mode="plan"] .message-mode-badge.is-plan',
+    );
+    expect(bubble).toBeTruthy();
+    expect(badge).toBeTruthy();
+    expect((badge?.textContent ?? "").trim()).toBe("");
+  });
+
+  it("does not backfill historical user message badge from active mode", () => {
+    const items: ConversationItem[] = [
+      {
+        id: "msg-no-mode-1",
+        kind: "message",
+        role: "user",
+        text: "这条消息本身没有模式元数据",
       },
     ];
 
@@ -191,15 +261,7 @@ describe("Messages", () => {
       />,
     );
 
-    const bubble = container.querySelector(
-      '.message-bubble[data-collab-mode="plan"]',
-    );
-    const badge = container.querySelector(
-      '.message-bubble[data-collab-mode="plan"] .message-mode-badge.is-plan',
-    );
-    expect(bubble).toBeTruthy();
-    expect(badge).toBeTruthy();
-    expect((badge?.textContent ?? "").trim()).toBe("");
+    expect(container.querySelector(".message-mode-badge")).toBeNull();
   });
 
   it("does not show collaboration badge for non-codex engines", () => {
@@ -321,6 +383,42 @@ describe("Messages", () => {
     );
 
     expect(screen.getByText("Proceed with profile?")).toBeTruthy();
+  });
+
+  it("keeps user-input request inline disabled for non-codex engines", () => {
+    const request: RequestUserInputRequest = {
+      workspace_id: "ws-state",
+      request_id: 9,
+      params: {
+        thread_id: "thread-from-state",
+        turn_id: "turn-9",
+        item_id: "item-9",
+        questions: [
+          {
+            id: "q9",
+            header: "Confirm",
+            question: "Should stay hidden on non-codex",
+            options: [{ label: "Yes", description: "Continue." }],
+          },
+        ],
+      },
+    };
+
+    render(
+      <Messages
+        items={[]}
+        threadId="thread-from-state"
+        workspaceId="ws-state"
+        isThinking={false}
+        userInputRequests={[request]}
+        onUserInputSubmit={vi.fn()}
+        activeEngine="claude"
+        openTargets={[]}
+        selectedOpenAppId=""
+      />,
+    );
+
+    expect(screen.queryByText("Should stay hidden on non-codex")).toBeNull();
   });
 
   it("applies codex markdown visual style through presentation profile", () => {

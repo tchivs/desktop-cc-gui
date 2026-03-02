@@ -103,7 +103,7 @@ export const ButtonArea = ({
 }: ButtonAreaProps) => {
   const { t } = useTranslation();
   // const fileInputRef = useRef<HTMLInputElement>(null);
-  const isPlanModeEnabled = (selectedCollaborationModeId ?? 'plan') === 'plan';
+  const isPlanModeEnabled = (selectedCollaborationModeId ?? 'code') === 'plan';
 
   // Track changes to custom models in localStorage
   // When localStorage changes, updating this version number triggers useMemo recalculation

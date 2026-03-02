@@ -42,6 +42,9 @@ type UseQueuedSendOptions = {
   startImport: (text: string) => Promise<void>;
   startLsp: (text: string) => Promise<void>;
   startShare: (text: string) => Promise<void>;
+  startMode: (text: string) => Promise<void>;
+  setCodexCollaborationMode?: (mode: "plan" | "code") => void;
+  getCodexCollaborationMode?: () => "plan" | "code" | null;
   clearActiveImages: () => void;
 };
 
@@ -72,7 +75,36 @@ type SlashCommandKind =
   | "export"
   | "import"
   | "lsp"
-  | "share";
+  | "share"
+  | "plan"
+  | "defaultMode"
+  | "code"
+  | "mode";
+
+const MODE_QUERY_DENYLIST =
+  /(区别|差别|不同|怎么|如何|为什么|为何|影响|不影响|约束|规则|行为|能力|planfirst|agents\.?md)/i;
+
+function isImplicitModeQuery(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed.length > 64) {
+    return false;
+  }
+  if (MODE_QUERY_DENYLIST.test(trimmed)) {
+    return false;
+  }
+  const normalized = trimmed.toLowerCase();
+  if (
+    /^(?:mode|current\s+mode|what(?:'s| is)\s+(?:the\s+)?(?:current\s+)?mode|am i in (?:plan|default) mode)\s*[?]?$/i
+      .test(normalized)
+  ) {
+    return true;
+  }
+  if (/^(现在呢|当前呢|此时呢)\s*[？?]?$/u.test(trimmed)) {
+    return true;
+  }
+  return /^(现在|当前|此时).{0,24}(模式|计划模式|default|默认).{0,24}(吗|呢)?\s*[？?]?$/u
+    .test(trimmed);
+}
 
 function parseSlashCommand(text: string): SlashCommandKind | null {
   if (/^\/fork\b/i.test(text)) {
@@ -108,7 +140,41 @@ function parseSlashCommand(text: string): SlashCommandKind | null {
   if (/^\/share\b/i.test(text)) {
     return "share";
   }
+  if (/^\/plan\b/i.test(text)) {
+    return "plan";
+  }
+  if (/^\/default\b/i.test(text)) {
+    return "defaultMode";
+  }
+  if (/^\/code\b/i.test(text)) {
+    return "code";
+  }
+  if (/^\/mode\b/i.test(text)) {
+    return "mode";
+  }
   return null;
+}
+
+function isCodexOnlyCommand(command: SlashCommandKind): boolean {
+  return (
+    command === "plan" ||
+    command === "defaultMode" ||
+    command === "code" ||
+    command === "mode"
+  );
+}
+
+function canExecuteSlashCommand(
+  command: SlashCommandKind | null,
+  activeEngine: EngineType,
+): command is SlashCommandKind {
+  if (!command) {
+    return false;
+  }
+  if (isCodexOnlyCommand(command) && activeEngine !== "codex") {
+    return false;
+  }
+  return true;
 }
 
 export function useQueuedSend({
@@ -132,6 +198,9 @@ export function useQueuedSend({
   startImport,
   startLsp,
   startShare,
+  startMode,
+  setCodexCollaborationMode,
+  getCodexCollaborationMode,
   clearActiveImages,
 }: UseQueuedSendOptions): UseQueuedSendResult {
   const [queuedByThread, setQueuedByThread] = useState<
@@ -175,67 +244,129 @@ export function useQueuedSend({
     }));
   }, []);
 
+  const withCodexCollaborationMode = useCallback(
+    (options?: MessageSendOptions): MessageSendOptions | undefined => {
+      if (activeEngine !== "codex") {
+        return options;
+      }
+      const existingModeRaw = options?.collaborationMode?.mode;
+      const existingMode = typeof existingModeRaw === "string"
+        ? existingModeRaw.trim().toLowerCase()
+        : null;
+      if (existingMode === "plan" || existingMode === "code" || existingMode === "default") {
+        return options;
+      }
+      const currentMode = getCodexCollaborationMode?.();
+      if (currentMode !== "plan" && currentMode !== "code") {
+        return options;
+      }
+      return {
+        ...(options ?? {}),
+        collaborationMode: {
+          mode: currentMode,
+          settings: {},
+        },
+      };
+    },
+    [activeEngine, getCodexCollaborationMode],
+  );
+
   const runSlashCommand = useCallback(
     async (
       command: SlashCommandKind,
       trimmed: string,
       options?: MessageSendOptions,
-    ) => {
+    ): Promise<boolean> => {
+      if (
+        (command === "plan" || command === "defaultMode" || command === "code") &&
+        activeEngine === "codex" &&
+        setCodexCollaborationMode
+      ) {
+        const targetMode = command === "plan" ? "plan" : "code";
+        setCodexCollaborationMode(targetMode);
+        const rest = trimmed
+          .replace(/^\/(?:plan|default|code)\b/i, "")
+          .trim();
+        if (rest) {
+          const modeOverrideOptions: MessageSendOptions = {
+            ...(options ?? {}),
+            collaborationMode: {
+              mode: targetMode,
+              settings: {},
+            },
+          };
+          if (options) {
+            await sendUserMessage(rest, [], modeOverrideOptions);
+          } else {
+            await sendUserMessage(rest, [], modeOverrideOptions);
+          }
+        }
+        return true;
+      }
+      if (command === "mode" && activeEngine === "codex") {
+        await startMode(trimmed);
+        return true;
+      }
       if (command === "fork") {
         await startFork(trimmed);
-        return;
+        return true;
       }
       if (command === "review") {
         await startReview(trimmed);
-        return;
+        return true;
       }
       if (command === "resume") {
         await startResume(trimmed);
-        return;
+        return true;
       }
       if (command === "mcp") {
         await startMcp(trimmed);
-        return;
+        return true;
       }
       if (command === "specRoot") {
         await startSpecRoot(trimmed);
-        return;
+        return true;
       }
       if (command === "status") {
         await startStatus(trimmed);
-        return;
+        return true;
       }
       if (command === "export") {
         await startExport(trimmed);
-        return;
+        return true;
       }
       if (command === "import") {
         await startImport(trimmed);
-        return;
+        return true;
       }
       if (command === "lsp") {
         await startLsp(trimmed);
-        return;
+        return true;
       }
       if (command === "share") {
         await startShare(trimmed);
-        return;
+        return true;
       }
       if (command === "new" && activeWorkspace) {
         const threadId = await startThreadForWorkspace(activeWorkspace.id, { engine: activeEngine });
         const rest = trimmed.replace(/^\/new\b/i, "").trim();
+        const effectiveOptions = withCodexCollaborationMode(options);
         if (threadId && rest) {
-          if (options) {
-            await sendUserMessageToThread(activeWorkspace, threadId, rest, [], options);
+          if (effectiveOptions) {
+            await sendUserMessageToThread(activeWorkspace, threadId, rest, [], effectiveOptions);
           } else {
             await sendUserMessageToThread(activeWorkspace, threadId, rest, []);
           }
         }
+        return true;
       }
+      return false;
     },
     [
       activeWorkspace,
       activeEngine,
+      setCodexCollaborationMode,
+      sendUserMessage,
       sendUserMessageToThread,
       startFork,
       startReview,
@@ -247,7 +378,9 @@ export function useQueuedSend({
       startImport,
       startLsp,
       startShare,
+      startMode,
       startThreadForWorkspace,
+      withCodexCollaborationMode,
     ],
   );
 
@@ -259,7 +392,8 @@ export function useQueuedSend({
     ) => {
       const trimmed = text.trim();
       const command = parseSlashCommand(trimmed);
-      const nextImages = command ? [] : images;
+      const commandEnabled = canExecuteSlashCommand(command, activeEngine);
+      const nextImages = commandEnabled ? [] : images;
       if (!trimmed && nextImages.length === 0) {
         return;
       }
@@ -281,19 +415,33 @@ export function useQueuedSend({
       if (activeWorkspace && !activeWorkspace.connected) {
         await connectWorkspace(activeWorkspace);
       }
-      if (command) {
-        await runSlashCommand(command, trimmed, options);
+      if (commandEnabled && command) {
+        const handled = await runSlashCommand(command, trimmed, options);
+        if (handled) {
+          clearActiveImages();
+          return;
+        }
+      }
+      const implicitModeQuery =
+        activeEngine === "codex" &&
+        !command &&
+        nextImages.length === 0 &&
+        isImplicitModeQuery(trimmed);
+      if (implicitModeQuery) {
+        await startMode(trimmed);
         clearActiveImages();
         return;
       }
-      if (options) {
-        await sendUserMessage(trimmed, nextImages, options);
+      const effectiveOptions = withCodexCollaborationMode(options);
+      if (effectiveOptions) {
+        await sendUserMessage(trimmed, nextImages, effectiveOptions);
       } else {
         await sendUserMessage(trimmed, nextImages);
       }
       clearActiveImages();
     },
     [
+      activeEngine,
       activeThreadId,
       activeWorkspace,
       clearActiveImages,
@@ -303,7 +451,9 @@ export function useQueuedSend({
       isReviewing,
       steerEnabled,
       runSlashCommand,
+      startMode,
       sendUserMessage,
+      withCodexCollaborationMode,
     ],
   );
 
@@ -315,7 +465,8 @@ export function useQueuedSend({
     ) => {
       const trimmed = text.trim();
       const command = parseSlashCommand(trimmed);
-      const nextImages = command ? [] : images;
+      const commandEnabled = canExecuteSlashCommand(command, activeEngine);
+      const nextImages = commandEnabled ? [] : images;
       if (!trimmed && nextImages.length === 0) {
         return;
       }
@@ -335,7 +486,7 @@ export function useQueuedSend({
       enqueueMessage(activeThreadId, item);
       clearActiveImages();
     },
-    [activeThreadId, clearActiveImages, enqueueMessage, isReviewing],
+    [activeEngine, activeThreadId, clearActiveImages, enqueueMessage, isReviewing],
   );
 
   useEffect(() => {
@@ -428,18 +579,22 @@ export function useQueuedSend({
       try {
         const trimmed = nextItem.text.trim();
         const command = parseSlashCommand(trimmed);
-        if (command) {
-          await runSlashCommand(command, trimmed, nextItem.sendOptions);
-        } else {
-          if (nextItem.sendOptions) {
-            await sendUserMessage(
-              nextItem.text,
-              nextItem.images ?? [],
-              nextItem.sendOptions,
-            );
-          } else {
-            await sendUserMessage(nextItem.text, nextItem.images ?? []);
+        const commandEnabled = canExecuteSlashCommand(command, activeEngine);
+        if (commandEnabled && command) {
+          const handled = await runSlashCommand(command, trimmed, nextItem.sendOptions);
+          if (handled) {
+            return;
           }
+        }
+        const effectiveOptions = withCodexCollaborationMode(nextItem.sendOptions);
+        if (effectiveOptions) {
+          await sendUserMessage(
+            nextItem.text,
+            nextItem.images ?? [],
+            effectiveOptions,
+          );
+        } else {
+          await sendUserMessage(nextItem.text, nextItem.images ?? []);
         }
       } catch {
         setInFlightByThread((prev) => ({ ...prev, [threadId]: null }));
@@ -448,6 +603,7 @@ export function useQueuedSend({
       }
     })();
   }, [
+    activeEngine,
     activeThreadId,
     inFlightByThread,
     isProcessing,
@@ -456,6 +612,7 @@ export function useQueuedSend({
     queuedByThread,
     runSlashCommand,
     sendUserMessage,
+    withCodexCollaborationMode,
   ]);
 
   return {

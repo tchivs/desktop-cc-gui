@@ -757,6 +757,41 @@ go lang`,
     }
   });
 
+  it("strips plan fallback directive prefix from user message content", () => {
+    const item = buildConversationItemFromThreadItem({
+      type: "userMessage",
+      id: "msg-plan-fallback-1",
+      content: [
+        {
+          type: "text",
+          text:
+            "Execution policy (plan mode): planning-only. If blocker appears, call requestUserInput.\n\nUser request: 只改前端，不改后端。",
+        },
+      ],
+    });
+    expect(item).not.toBeNull();
+    if (item && item.kind === "message") {
+      expect(item.role).toBe("user");
+      expect(item.text).toBe("只改前端，不改后端。");
+      expect(item.collaborationMode).toBe("plan");
+    }
+  });
+
+  it("extracts collaboration mode metadata from user message payload", () => {
+    const item = buildConversationItemFromThreadItem({
+      type: "userMessage",
+      id: "msg-mode-meta-1",
+      mode: "default",
+      content: [{ type: "text", text: "保持默认模式" }],
+    });
+    expect(item).not.toBeNull();
+    if (item && item.kind === "message") {
+      expect(item.role).toBe("user");
+      expect(item.text).toBe("保持默认模式");
+      expect(item.collaborationMode).toBe("code");
+    }
+  });
+
   it("keeps image-only user messages without placeholder text", () => {
     const item = buildConversationItemFromThreadItem({
       type: "userMessage",

@@ -43,6 +43,7 @@ describe("ComposerInput collaboration mode", () => {
       name: "composer.planModeToggle",
     });
     expect(modeSwitch).toBeTruthy();
+    expect(modeSwitch.getAttribute("aria-checked")).toBe("false");
   });
 
   it("hides plan mode switch for non-codex engines", () => {

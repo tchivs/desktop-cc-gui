@@ -22,6 +22,29 @@ const CODEX_EXTERNAL_SPEC_PRIORITY_INSTRUCTIONS: &str = "If writableRoots contai
 const MODE_BLOCKED_REASON: &str = "requestUserInput is blocked while effective_mode=code";
 const MODE_BLOCKED_SUGGESTION: &str =
     "Switch to Plan mode and resend the prompt when user input is needed.";
+const MODE_BLOCKED_REASON_CODE_REQUEST_USER_INPUT: &str =
+    "request_user_input_blocked_in_default_mode";
+const MODE_BLOCKED_REASON_CODE_PLAN_READONLY: &str = "plan_readonly_violation";
+const MODE_BLOCKED_PLAN_REASON: &str = "This operation is blocked while effective_mode=plan.";
+const MODE_BLOCKED_PLAN_SUGGESTION: &str = "Switch to Default mode and retry the write operation.";
+const LOCAL_PLAN_BLOCKER_REQUEST_PREFIX: &str = "mossx-plan-blocker:";
+const LOCAL_PLAN_APPLY_REQUEST_PREFIX: &str = "mossx-plan-apply:";
+const PLAN_APPLY_ACTION_QUESTION_ID: &str = "plan_apply_action";
+const PLAN_BLOCKER_GENERIC_REASON: &str = "Plan 模式检测到阻断条件，需要你先确认下一步后再继续。";
+const PLAN_BLOCKER_USER_INPUT_REQUIRED_REASON: &str =
+    "Plan 模式检测到需要你补充关键信息，继续前请先确认输入。";
+
+#[derive(Debug, Default, Clone)]
+struct PlanTurnState {
+    active_turn_id: Option<String>,
+    has_user_input_request: bool,
+    synthetic_block_active: bool,
+    has_plan_update: bool,
+    last_plan_step_count: usize,
+    has_tool_activity: bool,
+    has_failed_tool_activity: bool,
+    agent_message_buffer: String,
+}
 
 fn extract_thread_id(value: &Value) -> Option<String> {
     let params = value.get("params")?;
@@ -29,6 +52,8 @@ fn extract_thread_id(value: &Value) -> Option<String> {
     params
         .get("threadId")
         .or_else(|| params.get("thread_id"))
+        .or_else(|| params.get("turn").and_then(|turn| turn.get("threadId")))
+        .or_else(|| params.get("turn").and_then(|turn| turn.get("thread_id")))
         .and_then(|t| t.as_str())
         .map(|s| s.to_string())
         .or_else(|| {
@@ -56,17 +81,653 @@ fn build_mode_blocked_event(
     thread_id: &str,
     blocked_method: &str,
     effective_mode: &str,
+    reason_code: &str,
+    reason: &str,
+    suggestion: &str,
     request_id: Option<Value>,
 ) -> Value {
     json!({
         "method": "collaboration/modeBlocked",
         "params": {
             "threadId": thread_id,
+            "thread_id": thread_id,
             "blockedMethod": blocked_method,
+            "blocked_method": blocked_method,
             "effectiveMode": effective_mode,
-            "reason": MODE_BLOCKED_REASON,
-            "suggestion": MODE_BLOCKED_SUGGESTION,
+            "effective_mode": effective_mode,
+            "reasonCode": reason_code,
+            "reason_code": reason_code,
+            "reason": reason,
+            "suggestion": suggestion,
             "requestId": request_id,
+            "request_id": request_id,
+        }
+    })
+}
+
+fn normalize_command_tokens_from_item(item: &Value) -> Vec<String> {
+    if let Some(command) = item.get("command") {
+        if let Some(command_str) = command.as_str() {
+            return command_str
+                .split_whitespace()
+                .map(|token| token.trim_matches(&['"', '\''][..]).to_lowercase())
+                .filter(|token| !token.is_empty())
+                .collect();
+        }
+        if let Some(command_array) = command.as_array() {
+            return command_array
+                .iter()
+                .filter_map(Value::as_str)
+                .map(|token| token.trim_matches(&['"', '\''][..]).to_lowercase())
+                .filter(|token| !token.is_empty())
+                .collect();
+        }
+    }
+    Vec::new()
+}
+
+fn is_repo_mutating_command_tokens(tokens: &[String]) -> bool {
+    if tokens.is_empty() {
+        return false;
+    }
+    let first = tokens[0].as_str();
+    if first != "git" {
+        return false;
+    }
+    let second = tokens
+        .get(1)
+        .map(|token| token.as_str())
+        .unwrap_or_default();
+    matches!(
+        second,
+        "add"
+            | "commit"
+            | "push"
+            | "pull"
+            | "merge"
+            | "rebase"
+            | "cherry-pick"
+            | "revert"
+            | "reset"
+            | "stash"
+            | "am"
+            | "apply"
+            | "rm"
+            | "mv"
+            | "checkout"
+            | "switch"
+            | "restore"
+            | "clean"
+            | "tag"
+            | "branch"
+            | "fetch"
+    )
+}
+
+fn detect_repo_mutating_blocked_method(value: &Value) -> Option<String> {
+    let method = extract_event_method(value)?;
+    if method != "item/started" && method != "item/updated" {
+        return None;
+    }
+    let item = value.get("params")?.get("item")?;
+    let item_type = item
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_lowercase();
+    let item_name = item
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_lowercase();
+    let item_tool_type = item
+        .get("toolType")
+        .or_else(|| item.get("tool_type"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_lowercase();
+    let item_kind = item
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_lowercase();
+
+    if item_type == "filechange"
+        || item_type == "apply_patch"
+        || item_name == "apply_patch"
+        || item_tool_type == "filechange"
+        || item_tool_type == "apply_patch"
+    {
+        return Some("item/tool/apply_patch".to_string());
+    }
+
+    if item_type == "commandexecution"
+        || item_tool_type == "commandexecution"
+        || item_kind == "command"
+    {
+        let tokens = normalize_command_tokens_from_item(item);
+        if is_repo_mutating_command_tokens(&tokens) {
+            let rendered = tokens.join(" ");
+            return Some(if rendered.is_empty() {
+                "item/tool/commandExecution".to_string()
+            } else {
+                format!("item/tool/commandExecution:{rendered}")
+            });
+        }
+    }
+    None
+}
+
+fn extract_turn_id(value: &Value) -> Option<String> {
+    let params = value.get("params")?;
+    params
+        .get("turnId")
+        .or_else(|| params.get("turn_id"))
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .or_else(|| {
+            params
+                .get("turn")
+                .and_then(|turn| turn.get("id"))
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+        })
+}
+
+fn detect_plan_blocker_reason(value: &Value) -> Option<&'static str> {
+    let method = extract_event_method(value)?;
+    if method == "turn/completed" {
+        let params = value.get("params")?;
+        let semantic_text = [
+            flatten_text_like_value(params.get("text").unwrap_or(&Value::Null)),
+            flatten_text_like_value(params.get("result").unwrap_or(&Value::Null)),
+            flatten_text_like_value(params.get("turn").unwrap_or(&Value::Null)),
+        ]
+        .join("\n");
+        return detect_plan_blocker_reason_from_semantic_text(&semantic_text);
+    }
+    if method != "item/completed" {
+        return None;
+    }
+    let params = value.get("params")?;
+    let item = params.get("item")?;
+    let status = item
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase();
+    let result_text =
+        flatten_text_like_value(item.get("result").unwrap_or(&Value::Null)).to_lowercase();
+    let error_text =
+        flatten_text_like_value(item.get("error").unwrap_or(&Value::Null)).to_lowercase();
+    let message_text =
+        flatten_text_like_value(item.get("text").unwrap_or(&Value::Null)).to_lowercase();
+
+    if result_text.contains("not_git_repo")
+        || result_text.contains("not a git repository")
+        || error_text.contains("not a git repository")
+    {
+        return Some("当前目录不是 Git 仓库，无法基于真实代码上下文继续计划。");
+    }
+
+    let missing_path_or_context = [
+        "no such file or directory",
+        "not found",
+        "does not exist",
+        "cannot access",
+        "missing",
+        "empty directory",
+        "未找到",
+        "不存在",
+        "缺失",
+        "空目录",
+    ]
+    .iter()
+    .any(|needle| result_text.contains(needle) || error_text.contains(needle));
+
+    if missing_path_or_context {
+        return Some("Plan 模式下发现关键路径或上下文缺失，继续推进前需要你确认范围与目标位置。");
+    }
+
+    let semantic_text = [
+        message_text.as_str(),
+        result_text.as_str(),
+        error_text.as_str(),
+    ]
+    .join("\n");
+    if let Some(reason) = detect_plan_blocker_reason_from_semantic_text(&semantic_text) {
+        return Some(reason);
+    }
+
+    if status == "failed" {
+        return Some("Plan 模式下的关键检查命令失败，缺少继续推进所需前置条件。");
+    }
+
+    None
+}
+
+fn detect_plan_blocker_reason_from_semantic_text(text: &str) -> Option<&'static str> {
+    let normalized = text.trim();
+    if normalized.is_empty() {
+        return None;
+    }
+    if looks_like_plan_blocker_prompt(normalized) {
+        return Some(PLAN_BLOCKER_GENERIC_REASON);
+    }
+    if looks_like_user_info_followup_prompt(normalized) {
+        return Some(PLAN_BLOCKER_USER_INPUT_REQUIRED_REASON);
+    }
+    None
+}
+
+fn looks_like_executable_plan_text(text: &str) -> bool {
+    let normalized = text.trim().to_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+    let has_plan_and_tests = (normalized.contains("实施计划")
+        || normalized.contains("执行计划")
+        || normalized.contains("implementation plan"))
+        && (normalized.contains("测试点")
+            || normalized.contains("验证点")
+            || normalized.contains("test cases")
+            || normalized.contains("verification"));
+    let structured_step_count = normalized
+        .lines()
+        .map(str::trim_start)
+        .filter(|line| {
+            let mut chars = line.chars();
+            let first = chars.next();
+            let second = chars.next();
+            first.map(|c| c.is_ascii_digit()).unwrap_or(false) && second == Some('.')
+                || line.starts_with("- ")
+                || line.starts_with("* ")
+                || line.starts_with("步骤")
+        })
+        .count();
+    has_plan_and_tests || structured_step_count >= 3
+}
+
+fn extract_plan_step_count(value: &Value) -> usize {
+    value
+        .get("params")
+        .and_then(|params| params.get("plan"))
+        .and_then(Value::as_array)
+        .map(|items| items.len())
+        .unwrap_or(0)
+}
+
+fn is_tool_or_command_item(item: &Value) -> bool {
+    let type_like = [
+        item.get("kind").and_then(Value::as_str).unwrap_or_default(),
+        item.get("type").and_then(Value::as_str).unwrap_or_default(),
+        item.get("toolType")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+        item.get("tool_type")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+        item.get("name").and_then(Value::as_str).unwrap_or_default(),
+    ]
+    .join(" ")
+    .to_lowercase();
+
+    type_like.contains("tool")
+        || type_like.contains("command")
+        || type_like.contains("shell")
+        || type_like.contains("terminal")
+        || type_like.contains("run")
+}
+
+fn item_suggests_failure(item: &Value) -> bool {
+    let status = item
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase();
+    if status == "failed" || status == "error" || status == "canceled" || status == "cancelled" {
+        return true;
+    }
+    let result_text =
+        flatten_text_like_value(item.get("result").unwrap_or(&Value::Null)).to_lowercase();
+    let error_text =
+        flatten_text_like_value(item.get("error").unwrap_or(&Value::Null)).to_lowercase();
+    [
+        "exit code",
+        "non-zero",
+        "command failed",
+        "error:",
+        "not found",
+        "no such file or directory",
+        "permission denied",
+        "timed out",
+        "failed",
+    ]
+    .iter()
+    .any(|needle| result_text.contains(needle) || error_text.contains(needle))
+}
+
+fn flatten_text_like_value(value: &Value) -> String {
+    match value {
+        Value::Null => String::new(),
+        Value::Bool(v) => v.to_string(),
+        Value::Number(v) => v.to_string(),
+        Value::String(v) => v.clone(),
+        Value::Array(values) => values
+            .iter()
+            .map(flatten_text_like_value)
+            .filter(|part| !part.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Value::Object(map) => map
+            .values()
+            .map(flatten_text_like_value)
+            .filter(|part| !part.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n"),
+    }
+}
+
+fn is_plan_blocker_stream_method(method: &str) -> bool {
+    matches!(
+        method,
+        "item/agentMessage/delta"
+            | "item/reasoning/textDelta"
+            | "item/reasoning/delta"
+            | "item/reasoning/summaryTextDelta"
+    )
+}
+
+fn extract_stream_delta_text(value: &Value) -> Option<String> {
+    let method = extract_event_method(value)?;
+    if !is_plan_blocker_stream_method(method) {
+        return None;
+    }
+    value
+        .get("params")
+        .and_then(|params| {
+            params
+                .get("delta")
+                .or_else(|| params.get("text"))
+                .or_else(|| params.get("summary"))
+        })
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(ToString::to_string)
+}
+
+fn looks_like_plan_blocker_prompt(text: &str) -> bool {
+    let normalized = text.trim().to_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+
+    let blocker_markers = [
+        "出现一个阻塞",
+        "出现阻塞",
+        "阻塞",
+        "阻塞点",
+        "卡住",
+        "卡点",
+        "受阻",
+        "blocker",
+        "阻断",
+        "无法把计划",
+        "无法将计划",
+        "无法继续",
+        "缺少前端源码",
+        "没有 src",
+        "无 src",
+        "还没看到前端源码",
+        "当前仓库只有",
+        "only docs",
+        "missing src",
+        "no src",
+        "not a git repository",
+        "只有 .git",
+        ".git 元数据",
+        "几乎只有",
+    ];
+    let question_markers = [
+        "先发一个选项问题",
+        "先发一个选项",
+        "先给你选项",
+        "选项让你决定",
+        "选项问题",
+        "请你选择",
+        "需要你确认",
+        "等待你选择",
+        "决定下一步",
+        "先确认下一步",
+        "继续前请先确认",
+        "requestuserinput",
+        "askuserquestion",
+    ];
+    let strong_context_gap_markers = [
+        "没有可执行前端代码",
+        "没有前端代码",
+        "缺少前端代码",
+        "缺少可分析的前端代码",
+        "没有前端源码",
+        "缺少前端源码",
+        "missing src",
+        "no src",
+        "only docs",
+        "not a git repository",
+        "只有 .git",
+        ".git 元数据",
+        "几乎只有",
+    ];
+    let plan_progress_markers = [
+        "计划",
+        "规划",
+        "落地",
+        "实施",
+        "下一步",
+        "继续",
+        "分析",
+        "定位",
+        "真实代码",
+        "真实文件",
+    ];
+    let blocking_verbs = [
+        "无法",
+        "不能",
+        "没有",
+        "缺少",
+        "未找到",
+        "不存在",
+        "还没看到",
+    ];
+    let structural_gap_hints = [
+        "docs/",
+        " docs ",
+        "src/",
+        " src ",
+        "前端源码",
+        "前端",
+        "frontend",
+        ".git",
+        "元数据",
+    ];
+    let has_blocker_marker = blocker_markers
+        .iter()
+        .any(|needle| normalized.contains(needle));
+    let has_question_marker = question_markers
+        .iter()
+        .any(|needle| normalized.contains(needle));
+    let has_strong_context_gap_marker = strong_context_gap_markers
+        .iter()
+        .any(|needle| normalized.contains(needle));
+    let has_plan_progress_marker = plan_progress_markers
+        .iter()
+        .any(|needle| normalized.contains(needle));
+    let has_blocking_verb = blocking_verbs
+        .iter()
+        .any(|needle| normalized.contains(needle));
+    let has_structural_gap_hint = structural_gap_hints
+        .iter()
+        .any(|needle| normalized.contains(needle));
+    (has_blocker_marker && (has_question_marker || (has_blocking_verb && has_structural_gap_hint)))
+        || (has_strong_context_gap_marker
+            && has_blocking_verb
+            && (has_plan_progress_marker || has_question_marker))
+}
+
+fn looks_like_user_info_followup_prompt(text: &str) -> bool {
+    let normalized = text.trim().to_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+    if looks_like_plan_blocker_prompt(&normalized) {
+        return false;
+    }
+
+    let has_question = normalized.contains('?')
+        || normalized.contains('？')
+        || normalized.contains("请问")
+        || normalized.contains("can you")
+        || normalized.contains("could you")
+        || normalized.contains("would you");
+    let has_imperative_request =
+        normalized.contains("请") || normalized.contains("麻烦") || normalized.contains("请把");
+    let has_request_marker = [
+        "请提供",
+        "请告诉",
+        "告诉我",
+        "发我",
+        "给我",
+        "请补充",
+        "需要你",
+        "我还不知道",
+        "还不清楚",
+        "无法确定",
+        "please provide",
+        "i need",
+        "need your",
+        "share your",
+        "provide your",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle));
+    let has_user_reference = normalized.contains("你")
+        || normalized.contains("你的")
+        || normalized.contains("you")
+        || normalized.contains("your");
+
+    (has_question || has_imperative_request) && has_request_marker && has_user_reference
+}
+
+fn is_repo_path_blocker_reason(reason: &str) -> bool {
+    let normalized = reason.trim().to_lowercase();
+    ["路径", "目录", "仓库", "git", "上下文", "context"]
+        .iter()
+        .any(|needle| normalized.contains(needle))
+}
+
+fn build_plan_blocker_question(reason: &str) -> String {
+    if is_repo_path_blocker_reason(reason) {
+        format!("{reason} 为避免误判路径，我需要你先确认下一步：")
+    } else {
+        format!("{reason} 我会在收到你的选择后继续：")
+    }
+}
+
+fn build_plan_blocker_options(reason: &str) -> Vec<Value> {
+    if is_repo_path_blocker_reason(reason) {
+        vec![
+            json!({
+                "label": "提供正确仓库路径 (Recommended)",
+                "description": "切换到真实代码仓后，我会基于仓库现状输出计划。"
+            }),
+            json!({
+                "label": "就在当前目录继续",
+                "description": "按当前目录继续，仅输出通用方案并明确假设边界。"
+            }),
+            json!({
+                "label": "仅做设计阶段",
+                "description": "不依赖仓库结构，只给高层设计和任务拆分。"
+            }),
+        ]
+    } else {
+        vec![
+            json!({
+                "label": "直接补充关键信息 (Recommended)",
+                "description": "我将按你补充的信息继续当前任务。"
+            }),
+            json!({
+                "label": "先给可选输入格式",
+                "description": "我先给你可填写模板，你确认后再继续。"
+            }),
+            json!({
+                "label": "先按通用假设继续",
+                "description": "我会标注假设边界并继续规划。"
+            }),
+        ]
+    }
+}
+
+fn build_plan_blocker_user_input_event(
+    thread_id: &str,
+    turn_id: Option<&str>,
+    request_id: &str,
+    reason: &str,
+) -> Value {
+    let question = build_plan_blocker_question(reason);
+    let options = build_plan_blocker_options(reason);
+    json!({
+        "method": "item/tool/requestUserInput",
+        "id": request_id,
+        "params": {
+            "threadId": thread_id,
+            "thread_id": thread_id,
+            "turnId": turn_id.unwrap_or(""),
+            "turn_id": turn_id.unwrap_or(""),
+            "itemId": format!("plan-blocker-{request_id}"),
+            "item_id": format!("plan-blocker-{request_id}"),
+            "questions": [{
+                "id": "plan_blocker_resolution",
+                "header": "Plan 模式阻断",
+                "question": question,
+                "options": options
+            }]
+        }
+    })
+}
+
+fn build_plan_apply_user_input_event(
+    thread_id: &str,
+    turn_id: Option<&str>,
+    request_id: &str,
+) -> Value {
+    json!({
+        "method": "item/tool/requestUserInput",
+        "id": request_id,
+        "params": {
+            "threadId": thread_id,
+            "thread_id": thread_id,
+            "turnId": turn_id.unwrap_or(""),
+            "turn_id": turn_id.unwrap_or(""),
+            "itemId": format!("plan-apply-{request_id}"),
+            "item_id": format!("plan-apply-{request_id}"),
+            "questions": [{
+                "id": PLAN_APPLY_ACTION_QUESTION_ID,
+                "header": "Implement this plan?",
+                "question": "Implement this plan?",
+                "options": [
+                    {
+                        "label": "Yes, implement this plan (Recommended)",
+                        "description": "Switch to Default and start coding."
+                    },
+                    {
+                        "label": "No, stay in Plan mode",
+                        "description": "Continue planning with the model."
+                    }
+                ]
+            }]
         }
     })
 }
@@ -118,6 +779,9 @@ pub(crate) struct WorkspaceSession {
     pub(crate) thread_mode_state: ThreadModeState,
     pub(crate) mode_enforcement_enabled: AtomicBool,
     pub(crate) collaboration_mode_supported: AtomicBool,
+    plan_turn_state: Mutex<HashMap<String, PlanTurnState>>,
+    local_user_input_requests: Mutex<HashMap<String, String>>,
+    local_request_seq: AtomicU64,
 }
 
 impl WorkspaceSession {
@@ -210,6 +874,47 @@ impl WorkspaceSession {
 
     pub(crate) async fn clear_thread_effective_mode(&self, thread_id: &str) {
         self.thread_mode_state.remove(thread_id).await;
+        self.plan_turn_state.lock().await.remove(thread_id);
+    }
+
+    pub(crate) async fn consume_local_user_input_request(&self, request_id: &str) -> bool {
+        self.local_user_input_requests
+            .lock()
+            .await
+            .remove(request_id)
+            .is_some()
+    }
+
+    async fn fire_and_forget_request(&self, method: &str, params: Value) -> Result<(), String> {
+        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        self.write_message(json!({ "id": id, "method": method, "params": params }))
+            .await
+    }
+
+    async fn try_interrupt_turn(&self, thread_id: &str, turn_id: &str) {
+        if let Err(error) = self
+            .fire_and_forget_request(
+                "turn/interrupt",
+                json!({
+                    "threadId": thread_id,
+                    "turnId": turn_id,
+                }),
+            )
+            .await
+        {
+            log::warn!(
+                "[collaboration_mode_enforcement] failed to interrupt plan turn thread_id={} turn_id={} error={}",
+                thread_id,
+                turn_id,
+                error
+            );
+            return;
+        }
+        log::info!(
+            "[collaboration_mode_enforcement] interrupt_sent thread_id={} turn_id={} reason=plan_blocker_user_input",
+            thread_id,
+            turn_id
+        );
     }
 
     async fn intercept_request_user_input_if_needed(&self, value: &Value) -> Option<Value> {
@@ -252,8 +957,331 @@ impl WorkspaceSession {
             method
         );
         Some(build_mode_blocked_event(
-            &thread_id, method, "code", request_id,
+            &thread_id,
+            method,
+            "code",
+            MODE_BLOCKED_REASON_CODE_REQUEST_USER_INPUT,
+            MODE_BLOCKED_REASON,
+            MODE_BLOCKED_SUGGESTION,
+            request_id,
         ))
+    }
+
+    async fn intercept_plan_repo_mutation_if_needed(&self, value: &Value) -> Option<Value> {
+        if !self.mode_enforcement_enabled() {
+            return None;
+        }
+        let thread_id = extract_thread_id(value)?;
+        let effective_mode = self.get_thread_effective_mode(&thread_id).await;
+        if effective_mode.as_deref() != Some("plan") {
+            return None;
+        }
+        let blocked_method = detect_repo_mutating_blocked_method(value)?;
+        log::info!(
+            "[collaboration_mode_enforcement] decision=blocked thread_id={} effective_mode=plan blocked_method={} reason={}",
+            thread_id,
+            blocked_method,
+            MODE_BLOCKED_REASON_CODE_PLAN_READONLY
+        );
+        Some(build_mode_blocked_event(
+            &thread_id,
+            &blocked_method,
+            "plan",
+            MODE_BLOCKED_REASON_CODE_PLAN_READONLY,
+            MODE_BLOCKED_PLAN_REASON,
+            MODE_BLOCKED_PLAN_SUGGESTION,
+            None,
+        ))
+    }
+
+    async fn track_plan_turn_state(&self, value: &Value) {
+        let Some(thread_id) = extract_thread_id(value) else {
+            return;
+        };
+        let Some(method) = extract_event_method(value) else {
+            return;
+        };
+        let mut states = self.plan_turn_state.lock().await;
+        match method {
+            "turn/started" => {
+                let state = states.entry(thread_id).or_default();
+                state.active_turn_id = extract_turn_id(value);
+                state.has_user_input_request = false;
+                state.synthetic_block_active = false;
+                state.has_plan_update = false;
+                state.last_plan_step_count = 0;
+                state.has_tool_activity = false;
+                state.has_failed_tool_activity = false;
+                state.agent_message_buffer.clear();
+            }
+            "item/started" | "item/updated" | "item/completed" => {
+                let item = value
+                    .get("params")
+                    .and_then(|params| params.get("item"))
+                    .cloned();
+                if let Some(item) = item {
+                    let state = states.entry(thread_id).or_default();
+                    if state.active_turn_id.is_none() {
+                        state.active_turn_id = extract_turn_id(value);
+                    }
+                    if is_tool_or_command_item(&item) {
+                        state.has_tool_activity = true;
+                        if item_suggests_failure(&item) {
+                            state.has_failed_tool_activity = true;
+                        }
+                    }
+                }
+            }
+            "item/tool/requestUserInput" => {
+                let state = states.entry(thread_id).or_default();
+                if state.active_turn_id.is_none() {
+                    state.active_turn_id = extract_turn_id(value);
+                }
+                state.has_user_input_request = true;
+            }
+            method if is_plan_blocker_stream_method(method) => {
+                let Some(delta) = extract_stream_delta_text(value) else {
+                    return;
+                };
+                let state = states.entry(thread_id).or_default();
+                state.agent_message_buffer.push_str(&delta);
+                const PLAN_BLOCKER_BUFFER_MAX_CHARS: usize = 8000;
+                if state.agent_message_buffer.len() > PLAN_BLOCKER_BUFFER_MAX_CHARS {
+                    let keep_from = state
+                        .agent_message_buffer
+                        .char_indices()
+                        .nth(
+                            state
+                                .agent_message_buffer
+                                .chars()
+                                .count()
+                                .saturating_sub(PLAN_BLOCKER_BUFFER_MAX_CHARS / 2),
+                        )
+                        .map(|(index, _)| index)
+                        .unwrap_or(0);
+                    state.agent_message_buffer =
+                        state.agent_message_buffer[keep_from..].to_string();
+                }
+            }
+            "turn/planUpdated" | "turn/plan/updated" => {
+                let state = states.entry(thread_id).or_default();
+                if state.active_turn_id.is_none() {
+                    state.active_turn_id = extract_turn_id(value);
+                }
+                state.has_plan_update = true;
+                state.last_plan_step_count = extract_plan_step_count(value);
+            }
+            "turn/completed" | "turn/error" => {
+                let state = states.entry(thread_id).or_default();
+                if state.active_turn_id.is_none() {
+                    state.active_turn_id = extract_turn_id(value);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    async fn maybe_emit_plan_blocker_user_input(&self, value: &Value) -> Option<Value> {
+        let thread_id = extract_thread_id(value)?;
+        let effective_mode = self.get_thread_effective_mode(&thread_id).await;
+        if effective_mode.as_deref() != Some("plan") {
+            // Guard for edge cases where runtime mode tracking desyncs but
+            // this turn is clearly producing plan updates.
+            let has_plan_signal = {
+                let states = self.plan_turn_state.lock().await;
+                states
+                    .get(&thread_id)
+                    .map(|state| state.has_plan_update)
+                    .unwrap_or(false)
+            };
+            if !has_plan_signal {
+                return None;
+            }
+        }
+        let method = extract_event_method(value)?;
+        let reason = if is_plan_blocker_stream_method(method) {
+            let aggregated = {
+                let states = self.plan_turn_state.lock().await;
+                states
+                    .get(&thread_id)
+                    .map(|state| state.agent_message_buffer.as_str())
+                    .unwrap_or_default()
+                    .to_string()
+            };
+            if !looks_like_plan_blocker_prompt(&aggregated) {
+                return None;
+            }
+            PLAN_BLOCKER_GENERIC_REASON
+        } else if method == "turn/completed" {
+            if let Some(reason) = detect_plan_blocker_reason(value) {
+                reason
+            } else {
+                let (
+                    has_tool_activity,
+                    has_failed_tool_activity,
+                    last_plan_step_count,
+                    buffered_text,
+                ) = {
+                    let states = self.plan_turn_state.lock().await;
+                    let state = states.get(&thread_id);
+                    (
+                        state.map(|item| item.has_tool_activity).unwrap_or(false),
+                        state
+                            .map(|item| item.has_failed_tool_activity)
+                            .unwrap_or(false),
+                        state.map(|item| item.last_plan_step_count).unwrap_or(0),
+                        state
+                            .map(|item| item.agent_message_buffer.clone())
+                            .unwrap_or_default(),
+                    )
+                };
+                if let Some(reason) = detect_plan_blocker_reason_from_semantic_text(&buffered_text)
+                {
+                    reason
+                } else {
+                    log::info!(
+                        "[collaboration_mode_enforcement][plan_blocker_probe] thread_id={} method=turn/completed has_tool_activity={} has_failed_tool_activity={} has_plan_update={} last_plan_step_count={} buffered_len={}",
+                        thread_id,
+                        has_tool_activity,
+                        has_failed_tool_activity,
+                        last_plan_step_count > 0,
+                        last_plan_step_count,
+                        buffered_text.chars().count(),
+                    );
+                    if last_plan_step_count > 0
+                        || looks_like_executable_plan_text(&buffered_text)
+                        || !has_tool_activity
+                    {
+                        return None;
+                    }
+                    if has_failed_tool_activity {
+                        "Plan 模式关键检查失败，需要你先确认下一步后再继续。"
+                    } else {
+                        "Plan 模式未产出可执行计划，需要你先确认下一步后再继续。"
+                    }
+                }
+            }
+        } else {
+            detect_plan_blocker_reason(value)?
+        };
+        let (already_asked, turn_id) = {
+            let states = self.plan_turn_state.lock().await;
+            let state = states.get(&thread_id);
+            (
+                state
+                    .map(|item| item.has_user_input_request)
+                    .unwrap_or(false),
+                state.and_then(|item| item.active_turn_id.clone()),
+            )
+        };
+        if already_asked {
+            return None;
+        }
+        {
+            let mut states = self.plan_turn_state.lock().await;
+            let state = states.entry(thread_id.clone()).or_default();
+            state.has_user_input_request = true;
+            state.synthetic_block_active = true;
+        }
+        let sequence = self.local_request_seq.fetch_add(1, Ordering::SeqCst);
+        let request_id = format!("{LOCAL_PLAN_BLOCKER_REQUEST_PREFIX}{sequence}");
+        self.local_user_input_requests
+            .lock()
+            .await
+            .insert(request_id.clone(), thread_id.clone());
+        if let Some(current_turn_id) = turn_id.as_deref() {
+            self.try_interrupt_turn(&thread_id, current_turn_id).await;
+        }
+        Some(build_plan_blocker_user_input_event(
+            &thread_id,
+            turn_id.as_deref(),
+            &request_id,
+            reason,
+        ))
+    }
+
+    async fn should_suppress_after_synthetic_plan_block(&self, value: &Value) -> bool {
+        let Some(thread_id) = extract_thread_id(value) else {
+            return false;
+        };
+        let Some(method) = extract_event_method(value) else {
+            return false;
+        };
+        let synthetic_block_active = {
+            let states = self.plan_turn_state.lock().await;
+            states
+                .get(&thread_id)
+                .map(|state| state.synthetic_block_active)
+                .unwrap_or(false)
+        };
+        if !synthetic_block_active {
+            return false;
+        }
+        if method == "item/tool/requestUserInput" {
+            return false;
+        }
+        if method == "turn/error" {
+            return true;
+        }
+        if method == "turn/completed" {
+            return false;
+        }
+        method.starts_with("item/")
+            || method == "processing/heartbeat"
+            || method == "turn/planUpdated"
+            || method == "turn/plan/updated"
+    }
+
+    async fn maybe_emit_plan_apply_user_input(&self, value: &Value) -> Option<Value> {
+        let method = extract_event_method(value)?;
+        if method != "turn/completed" {
+            return None;
+        }
+        let thread_id = extract_thread_id(value)?;
+        let effective_mode = self.get_thread_effective_mode(&thread_id).await;
+        if effective_mode.as_deref() != Some("plan") {
+            return None;
+        }
+        let (already_asked, has_plan_update, turn_id) = {
+            let states = self.plan_turn_state.lock().await;
+            let state = states.get(&thread_id);
+            (
+                state
+                    .map(|item| item.has_user_input_request)
+                    .unwrap_or(false),
+                state.map(|item| item.has_plan_update).unwrap_or(false),
+                state.and_then(|item| item.active_turn_id.clone()),
+            )
+        };
+        if already_asked || !has_plan_update {
+            return None;
+        }
+        {
+            let mut states = self.plan_turn_state.lock().await;
+            let state = states.entry(thread_id.clone()).or_default();
+            state.has_user_input_request = true;
+        }
+        let sequence = self.local_request_seq.fetch_add(1, Ordering::SeqCst);
+        let request_id = format!("{LOCAL_PLAN_APPLY_REQUEST_PREFIX}{sequence}");
+        self.local_user_input_requests
+            .lock()
+            .await
+            .insert(request_id.clone(), thread_id.clone());
+        Some(build_plan_apply_user_input_event(
+            &thread_id,
+            turn_id.as_deref(),
+            &request_id,
+        ))
+    }
+
+    async fn clear_terminal_plan_turn_state(&self, thread_id: Option<&str>, method: Option<&str>) {
+        if !matches!(method, Some("turn/completed") | Some("turn/error")) {
+            return;
+        }
+        let Some(thread_id) = thread_id else {
+            return;
+        };
+        self.plan_turn_state.lock().await.remove(thread_id);
     }
 }
 
@@ -734,6 +1762,9 @@ pub(crate) async fn spawn_workspace_session<E: EventSink>(
         thread_mode_state: ThreadModeState::default(),
         mode_enforcement_enabled: AtomicBool::new(true),
         collaboration_mode_supported: AtomicBool::new(true),
+        plan_turn_state: Mutex::new(HashMap::new()),
+        local_user_input_requests: Mutex::new(HashMap::new()),
+        local_request_seq: AtomicU64::new(1),
     });
 
     let session_clone = Arc::clone(&session);
@@ -765,6 +1796,29 @@ pub(crate) async fn spawn_workspace_session<E: EventSink>(
             {
                 value = blocked_event;
             }
+            let synthetic_mode_block_event = session_clone
+                .intercept_plan_repo_mutation_if_needed(&value)
+                .await;
+            session_clone.track_plan_turn_state(&value).await;
+            let synthetic_plan_event = session_clone
+                .maybe_emit_plan_blocker_user_input(&value)
+                .await;
+            let synthetic_plan_apply_event =
+                session_clone.maybe_emit_plan_apply_user_input(&value).await;
+            if session_clone
+                .should_suppress_after_synthetic_plan_block(&value)
+                .await
+            {
+                let suppressed_thread_id = extract_thread_id(&value);
+                let suppressed_method = extract_event_method(&value);
+                session_clone
+                    .clear_terminal_plan_turn_state(
+                        suppressed_thread_id.as_deref(),
+                        suppressed_method,
+                    )
+                    .await;
+                continue;
+            }
 
             // Parse the response ID flexibly: the app-server may return it as
             // u64, i64, or even a string representation of a number.
@@ -775,6 +1829,7 @@ pub(crate) async fn spawn_workspace_session<E: EventSink>(
             });
             let has_method = value.get("method").is_some();
             let has_result_or_error = value.get("result").is_some() || value.get("error").is_some();
+            let event_method = extract_event_method(&value).map(ToString::to_string);
 
             // Check if this event is for a background thread
             let thread_id = extract_thread_id(&value);
@@ -824,6 +1879,64 @@ pub(crate) async fn spawn_workspace_session<E: EventSink>(
                     event_sink_clone.emit_app_server_event(payload);
                 }
             }
+
+            if let Some(extra_event) = synthetic_mode_block_event {
+                let extra_thread_id = extract_thread_id(&extra_event);
+                let mut sent_to_background = false;
+                if let Some(ref tid) = extra_thread_id {
+                    let callbacks = session_clone.background_thread_callbacks.lock().await;
+                    if let Some(tx) = callbacks.get(tid) {
+                        let _ = tx.send(extra_event.clone());
+                        sent_to_background = true;
+                    }
+                }
+                if !sent_to_background {
+                    let payload = AppServerEvent {
+                        workspace_id: workspace_id.clone(),
+                        message: extra_event,
+                    };
+                    event_sink_clone.emit_app_server_event(payload);
+                }
+            }
+            if let Some(extra_event) = synthetic_plan_event {
+                let extra_thread_id = extract_thread_id(&extra_event);
+                let mut sent_to_background = false;
+                if let Some(ref tid) = extra_thread_id {
+                    let callbacks = session_clone.background_thread_callbacks.lock().await;
+                    if let Some(tx) = callbacks.get(tid) {
+                        let _ = tx.send(extra_event.clone());
+                        sent_to_background = true;
+                    }
+                }
+                if !sent_to_background {
+                    let payload = AppServerEvent {
+                        workspace_id: workspace_id.clone(),
+                        message: extra_event,
+                    };
+                    event_sink_clone.emit_app_server_event(payload);
+                }
+            }
+            if let Some(extra_event) = synthetic_plan_apply_event {
+                let extra_thread_id = extract_thread_id(&extra_event);
+                let mut sent_to_background = false;
+                if let Some(ref tid) = extra_thread_id {
+                    let callbacks = session_clone.background_thread_callbacks.lock().await;
+                    if let Some(tx) = callbacks.get(tid) {
+                        let _ = tx.send(extra_event.clone());
+                        sent_to_background = true;
+                    }
+                }
+                if !sent_to_background {
+                    let payload = AppServerEvent {
+                        workspace_id: workspace_id.clone(),
+                        message: extra_event,
+                    };
+                    event_sink_clone.emit_app_server_event(payload);
+                }
+            }
+            session_clone
+                .clear_terminal_plan_turn_state(thread_id.as_deref(), event_method.as_deref())
+                .await;
         }
     });
 
@@ -851,7 +1964,11 @@ pub(crate) async fn spawn_workspace_session<E: EventSink>(
             "name": "mossx",
             "title": "MossX",
             "version": client_version
-        }
+        },
+        "capabilities": {
+            // Plan mode collaboration and requestUserInput are experimental APIs in codex app-server.
+            "experimentalApi": true
+        },
     });
     let init_result = timeout(
         Duration::from_secs(15),
@@ -887,9 +2004,16 @@ pub(crate) async fn spawn_workspace_session<E: EventSink>(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_mode_blocked_event, codex_args_override_instructions,
-        codex_external_spec_priority_config_arg, extract_thread_id,
-        should_block_request_user_input,
+        build_mode_blocked_event, build_plan_blocker_user_input_event,
+        codex_args_override_instructions, codex_external_spec_priority_config_arg,
+        detect_plan_blocker_reason, detect_repo_mutating_blocked_method, extract_plan_step_count,
+        extract_stream_delta_text, extract_thread_id, is_plan_blocker_stream_method,
+        is_repo_mutating_command_tokens, looks_like_executable_plan_text,
+        looks_like_plan_blocker_prompt, looks_like_user_info_followup_prompt,
+        normalize_command_tokens_from_item, should_block_request_user_input, PlanTurnState,
+        MODE_BLOCKED_PLAN_REASON, MODE_BLOCKED_PLAN_SUGGESTION, MODE_BLOCKED_REASON,
+        MODE_BLOCKED_REASON_CODE_PLAN_READONLY, MODE_BLOCKED_REASON_CODE_REQUEST_USER_INPUT,
+        MODE_BLOCKED_SUGGESTION,
     };
     use serde_json::json;
 
@@ -903,6 +2027,14 @@ mod tests {
     fn extract_thread_id_reads_snake_case() {
         let value = json!({ "params": { "thread_id": "thread-456" } });
         assert_eq!(extract_thread_id(&value), Some("thread-456".to_string()));
+    }
+
+    #[test]
+    fn extract_thread_id_reads_turn_nested_shape() {
+        let value = json!({ "params": { "turn": { "threadId": "thread-turn-1" } } });
+        assert_eq!(extract_thread_id(&value), Some("thread-turn-1".to_string()));
+        let value = json!({ "params": { "turn": { "thread_id": "thread-turn-2" } } });
+        assert_eq!(extract_thread_id(&value), Some("thread-turn-2".to_string()));
     }
 
     #[test]
@@ -967,19 +2099,400 @@ mod tests {
             "thread-1",
             "item/tool/requestUserInput",
             "code",
+            MODE_BLOCKED_REASON_CODE_REQUEST_USER_INPUT,
+            MODE_BLOCKED_REASON,
+            MODE_BLOCKED_SUGGESTION,
             Some(json!(91)),
         );
         assert_eq!(event["method"], "collaboration/modeBlocked");
         assert_eq!(event["params"]["threadId"], "thread-1");
+        assert_eq!(event["params"]["thread_id"], "thread-1");
         assert_eq!(
             event["params"]["blockedMethod"],
             "item/tool/requestUserInput"
         );
+        assert_eq!(
+            event["params"]["blocked_method"],
+            "item/tool/requestUserInput"
+        );
         assert_eq!(event["params"]["effectiveMode"], "code");
+        assert_eq!(event["params"]["effective_mode"], "code");
+        assert_eq!(
+            event["params"]["reasonCode"],
+            "request_user_input_blocked_in_default_mode"
+        );
+        assert_eq!(
+            event["params"]["reason_code"],
+            "request_user_input_blocked_in_default_mode"
+        );
         assert_eq!(
             event["params"]["reason"],
             "requestUserInput is blocked while effective_mode=code"
         );
         assert_eq!(event["params"]["requestId"], 91);
+        assert_eq!(event["params"]["request_id"], 91);
+    }
+
+    #[test]
+    fn normalize_command_tokens_from_item_supports_string_and_array() {
+        let string_item = json!({
+            "command": "git push origin main"
+        });
+        assert_eq!(
+            normalize_command_tokens_from_item(&string_item),
+            vec!["git", "push", "origin", "main"]
+        );
+        let array_item = json!({
+            "command": ["git", "commit", "-m", "msg"]
+        });
+        assert_eq!(
+            normalize_command_tokens_from_item(&array_item),
+            vec!["git", "commit", "-m", "msg"]
+        );
+    }
+
+    #[test]
+    fn is_repo_mutating_command_tokens_detects_git_write_actions() {
+        assert!(is_repo_mutating_command_tokens(
+            &["git", "push", "origin", "main"]
+                .iter()
+                .map(|value| value.to_string())
+                .collect::<Vec<_>>()
+        ));
+        assert!(is_repo_mutating_command_tokens(
+            &["git", "commit", "-m", "msg"]
+                .iter()
+                .map(|value| value.to_string())
+                .collect::<Vec<_>>()
+        ));
+        assert!(!is_repo_mutating_command_tokens(
+            &["git", "status"]
+                .iter()
+                .map(|value| value.to_string())
+                .collect::<Vec<_>>()
+        ));
+        assert!(!is_repo_mutating_command_tokens(
+            &["rg", "--files"]
+                .iter()
+                .map(|value| value.to_string())
+                .collect::<Vec<_>>()
+        ));
+    }
+
+    #[test]
+    fn detect_repo_mutating_blocked_method_detects_apply_patch_and_git_push() {
+        let patch_event = json!({
+            "method": "item/started",
+            "params": {
+                "threadId": "thread-1",
+                "item": {
+                    "id": "tool-1",
+                    "type": "apply_patch"
+                }
+            }
+        });
+        assert_eq!(
+            detect_repo_mutating_blocked_method(&patch_event),
+            Some("item/tool/apply_patch".to_string())
+        );
+
+        let git_push_event = json!({
+            "method": "item/started",
+            "params": {
+                "threadId": "thread-1",
+                "item": {
+                    "id": "tool-2",
+                    "type": "commandExecution",
+                    "command": ["git", "push", "origin", "main"]
+                }
+            }
+        });
+        assert_eq!(
+            detect_repo_mutating_blocked_method(&git_push_event),
+            Some("item/tool/commandExecution:git push origin main".to_string())
+        );
+
+        let read_only_event = json!({
+            "method": "item/started",
+            "params": {
+                "threadId": "thread-1",
+                "item": {
+                    "id": "tool-3",
+                    "type": "commandExecution",
+                    "command": ["git", "status"]
+                }
+            }
+        });
+        assert_eq!(detect_repo_mutating_blocked_method(&read_only_event), None);
+    }
+
+    #[test]
+    fn build_mode_blocked_event_for_plan_contains_standard_reason_code_and_suggestion() {
+        let event = build_mode_blocked_event(
+            "thread-plan-1",
+            "item/tool/commandExecution:git push origin main",
+            "plan",
+            MODE_BLOCKED_REASON_CODE_PLAN_READONLY,
+            MODE_BLOCKED_PLAN_REASON,
+            MODE_BLOCKED_PLAN_SUGGESTION,
+            None,
+        );
+        assert_eq!(event["method"], "collaboration/modeBlocked");
+        assert_eq!(event["params"]["effectiveMode"], "plan");
+        assert_eq!(event["params"]["reasonCode"], "plan_readonly_violation");
+        assert_eq!(
+            event["params"]["suggestion"],
+            "Switch to Default mode and retry the write operation."
+        );
+    }
+
+    #[test]
+    fn detect_plan_blocker_reason_matches_not_git_repo_marker() {
+        let event = json!({
+            "method": "item/completed",
+            "params": {
+                "threadId": "thread-1",
+                "item": {
+                    "status": "completed",
+                    "result": "NOT_GIT_REPO"
+                }
+            }
+        });
+        assert_eq!(
+            detect_plan_blocker_reason(&event),
+            Some("当前目录不是 Git 仓库，无法基于真实代码上下文继续计划。")
+        );
+    }
+
+    #[test]
+    fn detect_plan_blocker_reason_matches_missing_context_marker() {
+        let event = json!({
+            "method": "item/completed",
+            "params": {
+                "threadId": "thread-1",
+                "item": {
+                    "status": "completed",
+                    "error": "No such file or directory: /tmp/not-found"
+                }
+            }
+        });
+        assert_eq!(
+            detect_plan_blocker_reason(&event),
+            Some("Plan 模式下发现关键路径或上下文缺失，继续推进前需要你确认范围与目标位置。")
+        );
+    }
+
+    #[test]
+    fn detect_plan_blocker_reason_matches_semantic_assistant_blocker_text() {
+        let event = json!({
+            "method": "item/completed",
+            "params": {
+                "threadId": "thread-1",
+                "item": {
+                    "type": "agentMessage",
+                    "status": "completed",
+                    "text": "出现一个阻塞：当前仓库只有 docs/，没有 src/。我先发一个选项问题，等你选择后再继续。"
+                }
+            }
+        });
+        assert_eq!(
+            detect_plan_blocker_reason(&event),
+            Some("Plan 模式检测到阻断条件，需要你先确认下一步后再继续。")
+        );
+    }
+
+    #[test]
+    fn detect_plan_blocker_reason_matches_agent_delta_blocker_text() {
+        let event = json!({
+            "method": "item/agentMessage/delta",
+            "params": {
+                "threadId": "thread-1",
+                "delta": "出现一个阻塞：没有 src。需要你确认，我先发一个选项问题。"
+            }
+        });
+        assert_eq!(detect_plan_blocker_reason(&event), None);
+    }
+
+    #[test]
+    fn detect_plan_blocker_reason_matches_turn_completed_result_text() {
+        let event = json!({
+            "method": "turn/completed",
+            "params": {
+                "threadId": "thread-1",
+                "result": {
+                    "summary": "当前仓库只有 docs/plans，还没看到前端源码，无法把计划精确落地。下一步先发一个选项问题。"
+                }
+            }
+        });
+        assert_eq!(
+            detect_plan_blocker_reason(&event),
+            Some("Plan 模式检测到阻断条件，需要你先确认下一步后再继续。")
+        );
+    }
+
+    #[test]
+    fn detect_plan_blocker_reason_matches_turn_completed_turn_payload_text() {
+        let event = json!({
+            "method": "turn/completed",
+            "params": {
+                "threadId": "thread-1",
+                "turn": {
+                    "id": "turn-1",
+                    "status": "completed",
+                    "items": [{
+                        "type": "agentMessage",
+                        "text": "当前仓库只有 design.md，没有可执行前端代码文件，计划无法基于真实文件落地。先给你选项确认下一步。"
+                    }]
+                }
+            }
+        });
+        assert_eq!(
+            detect_plan_blocker_reason(&event),
+            Some("Plan 模式检测到阻断条件，需要你先确认下一步后再继续。")
+        );
+    }
+
+    #[test]
+    fn detect_plan_blocker_reason_matches_turn_completed_followup_question_text() {
+        let event = json!({
+            "method": "turn/completed",
+            "params": {
+                "threadId": "thread-1",
+                "result": {
+                    "summary": "我还不知道你的出生日期，所以现在算不出来。请把你的出生年月日发我，我可以继续。"
+                }
+            }
+        });
+        assert_eq!(
+            detect_plan_blocker_reason(&event),
+            Some("Plan 模式检测到需要你补充关键信息，继续前请先确认输入。")
+        );
+    }
+
+    #[test]
+    fn looks_like_plan_blocker_prompt_matches_docs_without_src_style() {
+        let text = "我已确认仓库当前只有 docs/plans 下的一份规划文档，还没看到前端源码；下一步先按你的规范检查 .claude/.codex/openspec。";
+        assert!(looks_like_plan_blocker_prompt(text));
+    }
+
+    #[test]
+    fn looks_like_plan_blocker_prompt_matches_key_blocker_phrase_from_ui() {
+        let text = "我定位到一个关键阻塞：仓库里目前只有 docs/plans/2026-03-02-csv-export.md，没有前端源码目录（如 src/），因此无法给出基于真实文件的落地计划。先发一个选项让你决定下一步。";
+        assert!(looks_like_plan_blocker_prompt(text));
+    }
+
+    #[test]
+    fn looks_like_plan_blocker_prompt_matches_git_metadata_without_frontend_text() {
+        let text =
+            "我刚定位到一个阻塞点：当前工作区几乎只有 .git 元数据，没有看到任何前端实现目录。";
+        assert!(looks_like_plan_blocker_prompt(text));
+    }
+
+    #[test]
+    fn looks_like_plan_blocker_prompt_matches_missing_frontend_without_blocker_word() {
+        let text = "当前仓库只有 design.md，没有可执行前端代码文件，计划无法基于真实代码落地。";
+        assert!(looks_like_plan_blocker_prompt(text));
+    }
+
+    #[test]
+    fn looks_like_executable_plan_text_matches_structured_plan_content() {
+        let text = "实施计划：\n1. 定位导出入口\n2. 补充 CSV 下载逻辑\n3. 增加回归测试\n测试点：验证导出文件头与空态处理";
+        assert!(looks_like_executable_plan_text(text));
+    }
+
+    #[test]
+    fn looks_like_executable_plan_text_rejects_blocker_only_text() {
+        let text = "当前仓库只有 design.md，没有可执行前端代码文件。";
+        assert!(!looks_like_executable_plan_text(text));
+    }
+
+    #[test]
+    fn extract_plan_step_count_reads_plan_updated_payload() {
+        let event = json!({
+            "method": "turn/plan/updated",
+            "params": {
+                "threadId": "thread-1",
+                "plan": [
+                    { "step": "Inspect", "status": "in_progress" },
+                    { "step": "Implement", "status": "pending" }
+                ]
+            }
+        });
+        assert_eq!(extract_plan_step_count(&event), 2);
+    }
+
+    #[test]
+    fn is_plan_blocker_stream_method_matches_reasoning_variants() {
+        assert!(is_plan_blocker_stream_method("item/agentMessage/delta"));
+        assert!(is_plan_blocker_stream_method("item/reasoning/textDelta"));
+        assert!(is_plan_blocker_stream_method("item/reasoning/delta"));
+        assert!(is_plan_blocker_stream_method(
+            "item/reasoning/summaryTextDelta"
+        ));
+        assert!(!is_plan_blocker_stream_method(
+            "item/reasoning/summaryPartAdded"
+        ));
+    }
+
+    #[test]
+    fn extract_stream_delta_text_reads_reasoning_delta_payload() {
+        let event = json!({
+            "method": "item/reasoning/textDelta",
+            "params": {
+                "threadId": "thread-1",
+                "itemId": "item-1",
+                "delta": "我刚定位到一个阻塞点：当前工作区几乎只有 .git 元数据。"
+            }
+        });
+        assert_eq!(
+            extract_stream_delta_text(&event),
+            Some("我刚定位到一个阻塞点：当前工作区几乎只有 .git 元数据。".to_string())
+        );
+    }
+
+    #[test]
+    fn looks_like_user_info_followup_prompt_matches_age_question() {
+        let text = "我还不知道你的出生日期。请把你的出生年月日发我，我就能继续。";
+        assert!(looks_like_user_info_followup_prompt(text));
+    }
+
+    #[test]
+    fn build_plan_blocker_user_input_event_has_questions() {
+        let event = build_plan_blocker_user_input_event(
+            "thread-1",
+            Some("turn-1"),
+            "mossx-plan-blocker:1",
+            "当前目录不是 Git 仓库，无法基于真实代码上下文继续计划。",
+        );
+        assert_eq!(event["method"], "item/tool/requestUserInput");
+        assert_eq!(event["id"], "mossx-plan-blocker:1");
+        assert_eq!(event["params"]["threadId"], "thread-1");
+        assert_eq!(event["params"]["turnId"], "turn-1");
+        assert_eq!(
+            event["params"]["questions"][0]["id"],
+            "plan_blocker_resolution"
+        );
+    }
+
+    #[test]
+    fn build_plan_blocker_user_input_event_uses_generic_options_for_non_repo_reason() {
+        let event = build_plan_blocker_user_input_event(
+            "thread-1",
+            Some("turn-1"),
+            "mossx-plan-blocker:2",
+            "Plan 模式检测到需要你补充关键信息，继续前请先确认输入。",
+        );
+        assert_eq!(
+            event["params"]["questions"][0]["options"][0]["label"],
+            "直接补充关键信息 (Recommended)"
+        );
+    }
+
+    #[test]
+    fn plan_turn_state_default_has_no_synthetic_block() {
+        let state = PlanTurnState::default();
+        assert!(!state.synthetic_block_active);
+        assert!(!state.has_user_input_request);
+        assert!(state.active_turn_id.is_none());
     }
 }

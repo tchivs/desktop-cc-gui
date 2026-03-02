@@ -685,7 +685,7 @@ export function ComposerInput({
   const collaborationModeDisabled = disabled;
   const planModeId = collaborationModes.find((mode) => mode.id === "plan")?.id ?? "plan";
   const defaultModeId = collaborationModes.find((mode) => mode.id !== planModeId)?.id ?? "code";
-  const resolvedCollaborationModeId = selectedCollaborationModeId ?? planModeId;
+  const resolvedCollaborationModeId = selectedCollaborationModeId ?? defaultModeId;
   const isPlanModeEnabled = resolvedCollaborationModeId === planModeId;
   const collaborationModeBadgeLabel = isPlanModeEnabled
     ? t("composer.planModeShort")

@@ -22,6 +22,9 @@ type UseThreadItemEventsOptions = {
   activeThreadId: string | null;
   dispatch: Dispatch<ThreadAction>;
   getCustomName: (workspaceId: string, threadId: string) => string | undefined;
+  resolveCollaborationUiMode?: (
+    threadId: string,
+  ) => "plan" | "code" | null;
   markProcessing: (threadId: string, isProcessing: boolean) => void;
   markReviewing: (threadId: string, isReviewing: boolean) => void;
   safeMessageActivity: () => void;
@@ -47,6 +50,7 @@ export function useThreadItemEvents({
   activeThreadId,
   dispatch,
   getCustomName,
+  resolveCollaborationUiMode,
   markProcessing,
   markReviewing,
   safeMessageActivity,
@@ -93,11 +97,20 @@ export function useThreadItemEvents({
 
       const converted = buildConversationItem(item);
       if (converted) {
+        const normalizedItem =
+          converted.kind === "message" &&
+          converted.role === "user" &&
+          !converted.collaborationMode
+            ? {
+                ...converted,
+                collaborationMode: resolveCollaborationUiMode?.(threadId) ?? null,
+              }
+            : converted;
         dispatch({
           type: "upsertItem",
           workspaceId,
           threadId,
-          item: converted,
+          item: normalizedItem,
           hasCustomName: Boolean(getCustomName(workspaceId, threadId)),
         });
       }
@@ -109,6 +122,7 @@ export function useThreadItemEvents({
       getCustomName,
       markProcessing,
       markReviewing,
+      resolveCollaborationUiMode,
       safeMessageActivity,
     ],
   );

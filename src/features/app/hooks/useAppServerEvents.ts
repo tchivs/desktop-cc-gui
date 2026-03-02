@@ -4,6 +4,7 @@ import type {
   AppServerEvent,
   ApprovalRequest,
   CollaborationModeBlockedRequest,
+  CollaborationModeResolvedRequest,
   RequestUserInputRequest,
 } from "../../../types";
 import { subscribeAppServerEvents } from "../../../services/events";
@@ -44,6 +45,7 @@ type AppServerEventHandlers = {
   onApprovalRequest?: (request: ApprovalRequest) => void;
   onRequestUserInput?: (request: RequestUserInputRequest) => void;
   onModeBlocked?: (event: CollaborationModeBlockedRequest) => void;
+  onModeResolved?: (event: CollaborationModeResolvedRequest) => void;
   onAgentMessageDelta?: (event: AgentDelta) => void;
   onAgentMessageCompleted?: (event: AgentCompleted) => void;
   onAppServerEvent?: (event: AppServerEvent) => void;
@@ -101,6 +103,19 @@ type UseAppServerEventsOptions = {
 
 function asString(value: unknown): string {
   return typeof value === "string" ? value : value ? String(value) : "";
+}
+
+function extractThreadIdFromParams(params: Record<string, unknown>): string {
+  const turn = (params.turn as Record<string, unknown> | undefined) ?? {};
+  const threadObj = (params.thread as Record<string, unknown> | undefined) ?? {};
+  return asString(
+    params.threadId ??
+      params.thread_id ??
+      turn.threadId ??
+      turn.thread_id ??
+      threadObj.id ??
+      "",
+  ).trim();
 }
 
 function toNumber(value: unknown): number {
@@ -352,6 +367,11 @@ export function useAppServerEvents(
           typeof requestIdValue === "number" || typeof requestIdValue === "string"
             ? requestIdValue
             : null;
+        const reasonCodeValue = params.reasonCode ?? params.reason_code;
+        const parsedReasonCode =
+          reasonCodeValue === undefined || reasonCodeValue === null
+            ? undefined
+            : String(reasonCodeValue);
         handlers.onModeBlocked?.({
           workspace_id,
           params: {
@@ -362,6 +382,7 @@ export function useAppServerEvents(
             effective_mode: String(
               params.effectiveMode ?? params.effective_mode ?? "",
             ),
+            ...(parsedReasonCode ? { reason_code: parsedReasonCode } : {}),
             reason: String(params.reason ?? ""),
             suggestion:
               params.suggestion === undefined || params.suggestion === null
@@ -373,8 +394,47 @@ export function useAppServerEvents(
         return;
       }
 
+      if (method === "collaboration/modeResolved") {
+        const params = (message.params as Record<string, unknown>) ?? {};
+        const selectedUiModeRaw = String(
+          params.selectedUiMode ?? params.selected_ui_mode ?? "",
+        ).trim().toLowerCase();
+        const effectiveRuntimeModeRaw = String(
+          params.effectiveRuntimeMode ?? params.effective_runtime_mode ?? "",
+        ).trim().toLowerCase();
+        const effectiveUiModeRaw = String(
+          params.effectiveUiMode ?? params.effective_ui_mode ?? "",
+        ).trim().toLowerCase();
+        const fallbackReasonRaw =
+          params.fallbackReason ?? params.fallback_reason;
+        const selectedUiMode =
+          selectedUiModeRaw === "plan" ? "plan" : "default";
+        const effectiveRuntimeMode =
+          effectiveRuntimeModeRaw === "plan" ? "plan" : "code";
+        const effectiveUiMode =
+          effectiveUiModeRaw === "plan" ? "plan" : "default";
+        handlers.onModeResolved?.({
+          workspace_id,
+          params: {
+            thread_id: String(params.threadId ?? params.thread_id ?? ""),
+            selected_ui_mode: selectedUiMode,
+            effective_runtime_mode: effectiveRuntimeMode,
+            effective_ui_mode: effectiveUiMode,
+            fallback_reason:
+              fallbackReasonRaw === undefined || fallbackReasonRaw === null
+                ? null
+                : String(fallbackReasonRaw),
+          },
+        });
+        return;
+      }
+
       if (method === "item/tool/requestUserInput" && hasRequestId) {
         const params = (message.params as Record<string, unknown>) ?? {};
+        const fallbackThreadId = handlers.getActiveCodexThreadId?.(workspace_id) ?? "";
+        const resolvedThreadId =
+          extractThreadIdFromParams(params) || fallbackThreadId;
+        const turn = (params.turn as Record<string, unknown> | undefined) ?? {};
         const questionsRaw = Array.isArray(params.questions) ? params.questions : [];
         const questions = questionsRaw
           .map((entry) => {
@@ -405,9 +465,9 @@ export function useAppServerEvents(
           workspace_id,
           request_id: requestId,
           params: {
-            thread_id: String(params.threadId ?? params.thread_id ?? ""),
-            turn_id: String(params.turnId ?? params.turn_id ?? ""),
-            item_id: String(params.itemId ?? params.item_id ?? ""),
+            thread_id: resolvedThreadId,
+            turn_id: String(params.turnId ?? params.turn_id ?? turn.id ?? ""),
+            item_id: String(params.itemId ?? params.item_id ?? turn.itemId ?? turn.item_id ?? ""),
             questions,
           },
         });

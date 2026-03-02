@@ -2658,6 +2658,7 @@ const zh = {
     hideSecret: "隐藏",
     submitFailed: "提交失败，请重试。",
     submit: "提交",
+    submitted: "已提交",
   },
 
   askUserQuestion: {

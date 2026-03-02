@@ -67,7 +67,9 @@ export function useCollaborationModes({
           if (!mode) {
             return null;
           }
-          const normalizedMode = mode.trim().toLowerCase();
+          const normalizedModeRaw = mode.trim().toLowerCase();
+          const normalizedMode =
+            normalizedModeRaw === "default" ? "code" : normalizedModeRaw;
           if (normalizedMode && normalizedMode !== "plan" && normalizedMode !== "code") {
             return null;
           }
@@ -112,7 +114,7 @@ export function useCollaborationModes({
       setModes(data);
       lastFetchedWorkspaceId.current = workspaceId;
       const preferredModeId =
-        data.find((mode) => mode.mode === "plan" || mode.id === "plan")?.id ??
+        data.find((mode) => mode.mode === "code" || mode.id === "code")?.id ??
         data[0]?.id ??
         null;
       setSelectedModeId((currentSelection) => {

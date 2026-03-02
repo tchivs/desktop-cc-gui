@@ -9,6 +9,26 @@
   justify-content: center;
 }
 
+/* Codex plan blocker: anchor question card over composer area instead of full-screen modal */
+.ask-user-question-overlay.is-composer-overlay {
+  pointer-events: none;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 var(--main-panel-padding, 16px) 28px;
+}
+
+.ask-user-question-overlay.is-composer-overlay .ask-user-question-backdrop {
+  display: none;
+}
+
+.ask-user-question-card.is-composer-overlay {
+  pointer-events: auto;
+  width: min(750px, calc(100vw - 32px));
+  max-height: min(46vh, 420px);
+  border-radius: 14px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.34);
+}
+
 .ask-user-question-backdrop {
   position: absolute;
   inset: 0;

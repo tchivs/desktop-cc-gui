@@ -1485,6 +1485,38 @@ describe("threadReducer", () => {
     expect(merged[merged.length - 1]?.id).toBe("pending-user");
   });
 
+  it("renames pending userInputRequest thread id together with thread rename", () => {
+    const pendingRequest = {
+      workspace_id: "ws-1",
+      request_id: "req-1",
+      params: {
+        thread_id: "codex-pending-1",
+        turn_id: "turn-1",
+        item_id: "item-1",
+        questions: [{ id: "q1", header: "", question: "继续?" }],
+      },
+    };
+    const base: ThreadState = {
+      ...initialState,
+      userInputRequests: [pendingRequest],
+      threadsByWorkspace: {
+        "ws-1": [
+          { id: "codex-pending-1", name: "Agent 1", updatedAt: 1, engineSource: "codex" },
+        ],
+      },
+    };
+
+    const next = threadReducer(base, {
+      type: "renameThreadId",
+      workspaceId: "ws-1",
+      oldThreadId: "codex-pending-1",
+      newThreadId: "codex:session-1",
+    });
+
+    expect(next.userInputRequests).toHaveLength(1);
+    expect(next.userInputRequests[0]?.params.thread_id).toBe("codex:session-1");
+  });
+
   it("stores plan state per thread and replaces stale plan for same thread", () => {
     const base: ThreadState = {
       ...initialState,

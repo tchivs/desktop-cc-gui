@@ -58,6 +58,7 @@ const baseSettings: AppSettings = {
   lastComposerReasoningEffort: null,
   uiScale: 1,
   theme: "system",
+  userMsgColor: "",
   usageShowRemaining: false,
   showMessageAnchors: true,
   uiFontFamily:
@@ -159,7 +160,6 @@ const renderDisplaySection = (
   };
 
   render(<SettingsView {...props} />);
-  fireEvent.click(screen.getByRole("button", { name: "Display & Sound" }));
 
   return { onUpdateAppSettings, onToggleTransparency };
 };
@@ -202,10 +202,10 @@ const renderComposerSection = (
     onDownloadDictationModel: vi.fn(),
     onCancelDictationDownload: vi.fn(),
     onRemoveDictationModel: vi.fn(),
+    initialSection: "composer",
   };
 
   render(<SettingsView {...props} />);
-  fireEvent.click(screen.getByRole("button", { name: "Composer" }));
 
   return { onUpdateAppSettings };
 };
@@ -231,6 +231,36 @@ describe("SettingsView Display", () => {
         expect.objectContaining({ theme: "dark" }),
       );
     });
+  });
+
+  it("updates user message color using reference-compatible format", async () => {
+    const onUpdateAppSettings = vi.fn().mockResolvedValue(undefined);
+    renderDisplaySection({ onUpdateAppSettings });
+
+    fireEvent.click(screen.getByTestId("settings-user-msg-color-preset-6e40c9"));
+
+    await waitFor(() => {
+      expect(onUpdateAppSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ userMsgColor: "#6e40c9" }),
+      );
+    });
+
+    fireEvent.change(screen.getByTestId("settings-user-msg-color-hex-input"), {
+      target: { value: "#cf222e" },
+    });
+
+    await waitFor(() => {
+      expect(onUpdateAppSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ userMsgColor: "#cf222e" }),
+      );
+    });
+
+    const callCountBeforeInvalid = onUpdateAppSettings.mock.calls.length;
+    fireEvent.change(screen.getByTestId("settings-user-msg-color-hex-input"), {
+      target: { value: "#zzzzzz" },
+    });
+
+    expect(onUpdateAppSettings).toHaveBeenCalledTimes(callCountBeforeInvalid);
   });
 
   it("toggles remaining limits display", async () => {

@@ -24,7 +24,7 @@ describe("resolveToolStatus", () => {
     expect(resolveToolStatus("unknown", false)).toBe("processing");
   });
 
-  it("maps askuserquestion to user input request display name", () => {
-    expect(getToolDisplayName("askuserquestion")).toBe("用户输入请求");
+  it("maps askuserquestion to ask user question display name", () => {
+    expect(getToolDisplayName("askuserquestion")).toBe("询问用户问题");
   });
 });

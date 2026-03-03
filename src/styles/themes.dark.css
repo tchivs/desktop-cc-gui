@@ -41,7 +41,9 @@
   --surface-command: #0c0e14;
   --surface-diff-card: #101218;
   --surface-bubble: #30303a;
-  --surface-bubble-user: #2e4a74;
+  --surface-bubble-user: #005fb8;
+  --color-message-user-bg: #005fb8;
+  --color-message-user-text: #ffffff;
   --surface-context-core: #0c0f16;
   --surface-popover: #0a0e14;
   --surface-review: #281c26;

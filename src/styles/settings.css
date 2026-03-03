@@ -3050,6 +3050,138 @@
   width: 100%;
 }
 
+.settings-color-config-card {
+  margin-bottom: 12px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--border-muted) 88%, transparent);
+  background: color-mix(in srgb, var(--surface-card) 78%, transparent);
+}
+
+.settings-color-config-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.settings-color-config-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--text-strong);
+}
+
+.settings-color-config-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.settings-color-preset-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.settings-color-swatch {
+  width: 56px;
+  height: 56px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: 14px;
+  border: 3px solid color-mix(in srgb, var(--border-strong) 78%, transparent);
+  background: transparent;
+  cursor: pointer;
+  transition: border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+}
+
+.settings-color-swatch:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--border-stronger) 90%, transparent);
+}
+
+.settings-color-swatch.is-active {
+  border-color: var(--border-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--border-accent) 30%, transparent);
+}
+
+.settings-color-swatch-inner {
+  width: 100%;
+  height: 100%;
+  border-radius: 10px;
+}
+
+.settings-color-custom-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.settings-color-custom-label {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.settings-color-picker {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border-muted) 95%, transparent);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.settings-color-picker-preview {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.settings-color-picker-input {
+  position: absolute;
+  inset: 0;
+  border: none;
+  padding: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.settings-color-hex-input {
+  width: 140px;
+  min-height: 46px;
+  font-family: var(--code-font-family);
+  font-size: 13px;
+}
+
+.settings-color-reset {
+  min-height: 46px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  border-radius: 10px;
+}
+
+.settings-color-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.settings-color-hint svg {
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+}
+
 .vendor-settings-panel {
   margin-top: 0;
 }

@@ -43,6 +43,7 @@ describe("useThreadStorage", () => {
     expect(result.current.pinnedThreadsRef.current).toEqual({
       "ws-1:thread-1": 202,
     });
+    expect(result.current.pinnedThreadsVersion).toBe(1);
 
     await waitFor(() => {
       expect(result.current.getCustomName("ws-1", "thread-1")).toBe("Custom");

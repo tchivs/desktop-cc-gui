@@ -11,7 +11,8 @@ export const READ_TOOL_NAMES = new Set([
 // 编辑文件的工具名称集合
 export const EDIT_TOOL_NAMES = new Set([
   'edit', 'edit_file', 'editfile', 'write', 'write_file', 'writefile',
-  'replace_string', 'file_edit', 'file_write', 'notebookedit',
+  'write_to_file', 'replace_string', 'file_edit', 'file_write', 'notebookedit',
+  'create_file',
 ]);
 
 // 终端命令的工具名称集合
@@ -112,7 +113,7 @@ const TOOL_DISPLAY_NAMES_FALLBACK: Record<string, string> = {
   websearch: '网络搜索',
   task: '子任务',
   todowrite: '待办列表',
-  askuserquestion: '用户输入请求',
+  askuserquestion: '询问用户问题',
   diff: 'Diff对比',
   result: '结果',
 };
@@ -199,7 +200,10 @@ export function isReadTool(toolName: string): boolean {
  */
 export function isEditTool(toolName: string): boolean {
   const lower = toolName.toLowerCase();
-  return EDIT_TOOL_NAMES.has(lower) || lower.includes('edit') || lower.includes('write');
+  if (EDIT_TOOL_NAMES.has(lower)) return true;
+  // Exclude known false positives like TodoWrite
+  if (lower === 'todowrite' || lower === 'todo_write') return false;
+  return lower.includes('edit') || lower.includes('write');
 }
 
 /**
@@ -337,6 +341,69 @@ export function getFirstStringField(
   return '';
 }
 
+export function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+export function normalizeCommandValue(value: unknown): string {
+  if (typeof value === 'string') {
+    return value.trim();
+  }
+  if (!Array.isArray(value)) {
+    return '';
+  }
+  const parts = value
+    .filter((entry): entry is string => typeof entry === 'string')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return parts.join(' ').trim();
+}
+
+export function getFirstCommandField(
+  source: Record<string, unknown> | null,
+  keys: string[],
+): string {
+  if (!source) return '';
+  for (const key of keys) {
+    const value = source[key];
+    const normalized = normalizeCommandValue(value);
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return '';
+}
+
+export const EDIT_PATH_KEYS = [
+  'file_path',
+  'filePath',
+  'filepath',
+  'path',
+  'target_file',
+  'targetFile',
+  'filename',
+  'file',
+];
+export const EDIT_OLD_KEYS = ['old_string', 'oldString'];
+export const EDIT_NEW_KEYS = ['new_string', 'newString'];
+export const EDIT_CONTENT_KEYS = ['content', 'new_content', 'newContent'];
+
+export function pickStringField(
+  source: Record<string, unknown> | null,
+  nestedInput: Record<string, unknown> | null,
+  nestedArgs: Record<string, unknown> | null,
+  keys: string[],
+): string {
+  return (
+    getFirstStringField(source, keys) ||
+    getFirstStringField(nestedInput, keys) ||
+    getFirstStringField(nestedArgs, keys)
+  );
+}
+
 export function extractCommandFromTitle(title: string): string {
   const trimmed = title.trim();
   if (!trimmed) {
@@ -379,14 +446,21 @@ export function buildCommandSummary(
 
   const detail = item.detail ?? '';
   const detailArgs = parseToolArgs(detail);
+  const nestedInput = asRecord(detailArgs?.input);
+  const nestedArgs = asRecord(detailArgs?.arguments);
   const titleCommand = extractCommandFromTitle(item.title ?? '');
-  const argsCommand = getFirstStringField(detailArgs, [
+  const commandKeys = [
     'command',
     'cmd',
     'script',
     'shell_command',
     'bash',
-  ]);
+    'argv',
+  ];
+  const argsCommand =
+    getFirstCommandField(detailArgs, commandKeys) ||
+    getFirstCommandField(nestedInput, commandKeys) ||
+    getFirstCommandField(nestedArgs, commandKeys);
   const detailCommand = includeDetail
     ? (ignorePathOnlyDetail && looksLikePathOnlyValue(detail) ? '' : detail.trim())
     : '';

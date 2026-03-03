@@ -3,6 +3,21 @@ import type { ConversationItem } from "../types";
 const MAX_ITEM_TEXT = 20000;
 const TOOL_OUTPUT_RECENT_ITEMS = 40;
 const NO_TRUNCATE_TOOL_TYPES = new Set(["fileChange", "commandExecution"]);
+const EDIT_TOOL_TYPE_HINTS = new Set([
+  "edit",
+  "edit_file",
+  "editfile",
+  "multiedit",
+  "write",
+  "write_file",
+  "writefile",
+  "write_to_file",
+  "replace_string",
+  "file_edit",
+  "file_write",
+  "notebookedit",
+  "create_file",
+]);
 const READ_COMMANDS = new Set(["cat", "sed", "head", "tail", "less", "more", "nl"]);
 const LIST_COMMANDS = new Set(["ls", "tree", "find", "fd"]);
 const SEARCH_COMMANDS = new Set(["rg", "grep", "ripgrep", "findstr"]);
@@ -37,6 +52,7 @@ const ASSISTANT_LINE_FRAGMENT_MIN_RUN = 6;
 const ASSISTANT_LINE_FRAGMENT_MAX_LENGTH = 10;
 const ASSISTANT_LINE_FRAGMENT_MIN_TOTAL_CHARS = 12;
 const ASSISTANT_TEXT_CACHE_MAX = 320;
+const ASSISTANT_NO_CONTENT_PLACEHOLDER_SET = new Set(["(no content)", "no content"]);
 const assistantNormalizedTextCache = new Map<string, string>();
 const assistantReadabilityScoreCache = new Map<
   string,
@@ -56,6 +72,53 @@ function asNumber(value: unknown) {
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function normalizeCommandValue(value: unknown) {
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  if (!Array.isArray(value)) {
+    return "";
+  }
+  const parts = value
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return parts.join(" ").trim();
+}
+
+function getFirstStringField(source: Record<string, unknown> | null, keys: string[]) {
+  if (!source) {
+    return "";
+  }
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return "";
+}
+
+function getFirstCommandField(source: Record<string, unknown> | null, keys: string[]) {
+  if (!source) {
+    return "";
+  }
+  for (const key of keys) {
+    const normalized = normalizeCommandValue(source[key]);
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return "";
 }
 
 function joinReasoningFragments(parts: string[]) {
@@ -107,6 +170,62 @@ function truncateText(text: string, maxLength = MAX_ITEM_TEXT) {
   }
   const sliceLength = Math.max(0, maxLength - 3);
   return `${text.slice(0, sliceLength)}...`;
+}
+
+function normalizeToolHint(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9_]/g, "");
+}
+
+function hasStructuredEditDetail(detail: string) {
+  const normalized = detail.toLowerCase();
+  return (
+    normalized.includes("\"old_string\"") ||
+    normalized.includes("\"oldstring\"") ||
+    normalized.includes("\"new_string\"") ||
+    normalized.includes("\"newstring\"") ||
+    normalized.includes("\"file_path\"") ||
+    normalized.includes("\"filepath\"") ||
+    normalized.includes("\"replace_all\"")
+  );
+}
+
+function hasStructuredJsonDetail(detail: string) {
+  const trimmed = detail.trim();
+  if (!trimmed) {
+    return false;
+  }
+  const startsLikeJsonObject = trimmed.startsWith("{") && trimmed.endsWith("}");
+  const startsLikeJsonArray = trimmed.startsWith("[") && trimmed.endsWith("]");
+  if (!startsLikeJsonObject && !startsLikeJsonArray) {
+    return false;
+  }
+  try {
+    const parsed = JSON.parse(trimmed);
+    return typeof parsed === "object" && parsed !== null;
+  } catch {
+    return false;
+  }
+}
+
+function shouldPreserveToolDetail(item: Extract<ConversationItem, { kind: "tool" }>) {
+  if (NO_TRUNCATE_TOOL_TYPES.has(item.toolType)) {
+    return true;
+  }
+  if (hasStructuredJsonDetail(item.detail)) {
+    return true;
+  }
+  const toolTypeHint = normalizeToolHint(item.toolType);
+  if (EDIT_TOOL_TYPE_HINTS.has(toolTypeHint)) {
+    return true;
+  }
+  const titleHint = normalizeToolHint(item.title.replace(/^Tool:\s*/i, ""));
+  if (EDIT_TOOL_TYPE_HINTS.has(titleHint)) {
+    return true;
+  }
+  if (item.detail.length > 2000 && hasStructuredEditDetail(item.detail)) {
+    return true;
+  }
+  return false;
 }
 
 function compactMessageText(value: string) {
@@ -744,6 +863,23 @@ function scoreAssistantMessageReadability(text: string) {
   return rememberCacheEntry(assistantReadabilityScoreCache, text, { normalized, score });
 }
 
+function normalizeAssistantPlaceholderText(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replaceAll("（", "(")
+    .replaceAll("）", ")");
+}
+
+function isAssistantNoContentPlaceholder(value: string) {
+  if (!value) {
+    return false;
+  }
+  return ASSISTANT_NO_CONTENT_PLACEHOLDER_SET.has(
+    normalizeAssistantPlaceholderText(value),
+  );
+}
+
 function normalizeStringList(value: unknown) {
   if (Array.isArray(value)) {
     return value.map((entry) => asString(entry)).filter(Boolean);
@@ -772,12 +908,15 @@ function formatCollabAgentStates(value: unknown) {
 
 export function normalizeItem(item: ConversationItem): ConversationItem {
   if (item.kind === "message") {
-    const normalizedText =
+    let normalizedText =
       item.role === "assistant"
         ? shouldNormalizeAssistantText(item.text)
           ? getNormalizedAssistantMessageText(item.text)
           : item.text
         : item.text;
+    if (item.role === "assistant" && isAssistantNoContentPlaceholder(normalizedText)) {
+      normalizedText = "";
+    }
     return { ...item, text: truncateText(normalizedText) };
   }
   if (item.kind === "explore") {
@@ -794,11 +933,12 @@ export function normalizeItem(item: ConversationItem): ConversationItem {
     return { ...item, diff: truncateText(item.diff) };
   }
   if (item.kind === "tool") {
+    const shouldKeepDetail = shouldPreserveToolDetail(item);
     const isNoTruncateTool = NO_TRUNCATE_TOOL_TYPES.has(item.toolType);
     return {
       ...item,
       title: truncateText(item.title, 200),
-      detail: truncateText(item.detail, 2000),
+      detail: shouldKeepDetail ? item.detail : truncateText(item.detail, 2000),
       output: isNoTruncateTool
         ? item.output
         : item.output
@@ -1159,6 +1299,14 @@ export function prepareThreadItems(items: ConversationItem[]) {
   }
   const filtered: ConversationItem[] = [];
   for (const item of coalesced) {
+    if (
+      item.kind === "message" &&
+      item.role === "assistant" &&
+      item.text.trim().length === 0 &&
+      (!item.images || item.images.length === 0)
+    ) {
+      continue;
+    }
     const last = filtered[filtered.length - 1];
     if (
       item.kind === "message" &&
@@ -1263,16 +1411,54 @@ export function buildConversationItem(
     return { id, kind: "reasoning", summary, content };
   }
   if (type === "commandExecution") {
-    const command = Array.isArray(item.command)
-      ? item.command.map((part) => asString(part)).join(" ")
-      : asString(item.command ?? "");
+    const input = asRecord(item.input);
+    const nestedArgs = asRecord(item.arguments);
+    const commandKeys = [
+      "command",
+      "cmd",
+      "script",
+      "shell_command",
+      "bash",
+      "argv",
+    ];
+    const descriptionKeys = [
+      "description",
+      "summary",
+      "label",
+      "title",
+      "task",
+    ];
+    const cwdKeys = ["cwd", "workdir", "working_directory", "workingDirectory"];
+    const command =
+      getFirstCommandField(item, commandKeys) ||
+      getFirstCommandField(input, commandKeys) ||
+      getFirstCommandField(nestedArgs, commandKeys);
+    const description =
+      getFirstStringField(item, descriptionKeys) ||
+      getFirstStringField(input, descriptionKeys) ||
+      getFirstStringField(nestedArgs, descriptionKeys);
+    const cwd =
+      getFirstStringField(item, cwdKeys) ||
+      getFirstStringField(input, cwdKeys) ||
+      getFirstStringField(nestedArgs, cwdKeys) ||
+      asString(item.cwd ?? "");
+    const detailPayload = description
+      ? JSON.stringify(
+          {
+            command: command || undefined,
+            description,
+            cwd: cwd || undefined,
+          },
+        )
+      : "";
     const durationMs = asNumber(item.durationMs ?? item.duration_ms);
+    const titleText = command || description;
     return {
       id,
       kind: "tool",
       toolType: type,
-      title: command ? `Command: ${command}` : "Command",
-      detail: asString(item.cwd ?? ""),
+      title: titleText ? `Command: ${titleText}` : "Command",
+      detail: detailPayload || cwd,
       status: asString(item.status ?? ""),
       output: asString(item.aggregatedOutput ?? ""),
       durationMs,

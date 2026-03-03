@@ -2,6 +2,7 @@ import { useThemePreference } from "../../layout/hooks/useThemePreference";
 import { useTransparencyPreference } from "../../layout/hooks/useTransparencyPreference";
 import { useUiScaleShortcuts } from "../../layout/hooks/useUiScaleShortcuts";
 import { useAppSettings } from "../../settings/hooks/useAppSettings";
+import { useUserMessageBubbleColor } from "./useUserMessageBubbleColor";
 
 export function useAppSettingsController() {
   const {
@@ -13,6 +14,7 @@ export function useAppSettingsController() {
   } = useAppSettings();
 
   useThemePreference(appSettings.theme);
+  useUserMessageBubbleColor(appSettings.userMsgColor);
   const { reduceTransparency, setReduceTransparency } =
     useTransparencyPreference();
 

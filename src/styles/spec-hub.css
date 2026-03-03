@@ -1400,14 +1400,16 @@
 .spec-hub-guidance-template ul {
   margin: 0;
   padding-left: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  list-style-type: disc;
 }
 
 .spec-hub-guidance-template li {
   font-size: 12px;
   color: var(--text-primary);
+}
+
+.spec-hub-guidance-template li + li {
+  margin-top: 4px;
 }
 
 .spec-hub-guidance-source {
@@ -1436,14 +1438,16 @@
 .spec-hub-guidance-highlights ul {
   margin: 0;
   padding-left: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  list-style-type: disc;
 }
 
 .spec-hub-guidance-highlights li {
   font-size: 12px;
   color: var(--text-primary);
+}
+
+.spec-hub-guidance-highlights li + li {
+  margin-top: 4px;
 }
 
 .spec-hub-guidance-next {
@@ -1944,15 +1948,17 @@
 .spec-hub-auto-preview ul {
   margin: 0;
   padding-left: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  list-style-type: disc;
 }
 
 .spec-hub-auto-preview li {
   font-size: 11px;
   color: var(--text-muted);
   line-height: 1.45;
+}
+
+.spec-hub-auto-preview li + li {
+  margin-top: 4px;
 }
 
 .spec-hub-command-preview-compact code {

@@ -21,7 +21,19 @@ import FlaskConical from "lucide-react/dist/esm/icons/flask-conical";
 import ExternalLink from "lucide-react/dist/esm/icons/external-link";
 import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { GripVertical, MoreHorizontal, Pencil, FolderOpen, Plus, Monitor, Sun, Moon } from "lucide-react";
+import {
+  GripVertical,
+  MoreHorizontal,
+  Pencil,
+  FolderOpen,
+  Plus,
+  Monitor,
+  Sun,
+  Moon,
+  MessageCircle,
+  RotateCcw,
+  Info,
+} from "lucide-react";
 import { DragDropContext, Droppable, Draggable, type DropResult } from "@hello-pangea/dnd";
 import {
   DropdownMenu,
@@ -334,6 +346,42 @@ const createOpenAppId = () => {
   return `open-app-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 };
 
+const USER_MSG_DARK_PRESETS = [
+  { color: "#005fb8", label: "Default" },
+  { color: "#1a7f37", label: "Green" },
+  { color: "#6e40c9", label: "Purple" },
+  { color: "#9a6700", label: "Amber" },
+  { color: "#cf222e", label: "Red" },
+  { color: "#0e6b8a", label: "Teal" },
+  { color: "#6b4c9a", label: "Violet" },
+  { color: "#4a5568", label: "Gray" },
+] as const;
+
+const USER_MSG_LIGHT_PRESETS = [
+  { color: "#0078d4", label: "Default" },
+  { color: "#1a7f37", label: "Green" },
+  { color: "#8250df", label: "Purple" },
+  { color: "#bf8700", label: "Amber" },
+  { color: "#cf222e", label: "Red" },
+  { color: "#0e8a9a", label: "Teal" },
+  { color: "#7c5cbf", label: "Violet" },
+  { color: "#57606a", label: "Gray" },
+] as const;
+
+import { normalizeHexColor, HEX_COLOR_PATTERN } from "../../../utils/colorUtils";
+
+const DEFAULT_DARK_USER_MSG = "#005fb8";
+const DEFAULT_LIGHT_USER_MSG = "#0078d4";
+
+const getSystemResolvedTheme = (): "light" | "dark" => {
+  if (typeof window === "undefined" || !window.matchMedia) {
+    return "dark";
+  }
+  return window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
+};
+
 export function SettingsView({
   workspaceGroups,
   groupedWorkspaces,
@@ -382,6 +430,12 @@ export function SettingsView({
   const [uiFontDraft, setUiFontDraft] = useState(appSettings.uiFontFamily);
   const [codeFontDraft, setCodeFontDraft] = useState(appSettings.codeFontFamily);
   const [codeFontSizeDraft, setCodeFontSizeDraft] = useState(appSettings.codeFontSize);
+  const [userMsgHexDraft, setUserMsgHexDraft] = useState(() =>
+    normalizeHexColor(appSettings.userMsgColor),
+  );
+  const [systemResolvedTheme, setSystemResolvedTheme] = useState<"light" | "dark">(
+    getSystemResolvedTheme,
+  );
   const [codexBinOverrideDrafts, setCodexBinOverrideDrafts] = useState<
     Record<string, string>
   >({});
@@ -461,6 +515,30 @@ export function SettingsView({
     cycleWorkspaceNext: appSettings.cycleWorkspaceNextShortcut ?? "",
     cycleWorkspacePrev: appSettings.cycleWorkspacePrevShortcut ?? "",
   });
+  const normalizedUserMsgColor = useMemo(
+    () => normalizeHexColor(appSettings.userMsgColor),
+    [appSettings.userMsgColor],
+  );
+  const resolvedAppearanceTheme = useMemo<"light" | "dark">(() => {
+    if (appSettings.theme === "light") {
+      return "light";
+    }
+    if (appSettings.theme === "system") {
+      return systemResolvedTheme;
+    }
+    return "dark";
+  }, [appSettings.theme, systemResolvedTheme]);
+  const userMsgPresets = useMemo(
+    () =>
+      resolvedAppearanceTheme === "light"
+        ? USER_MSG_LIGHT_PRESETS
+        : USER_MSG_DARK_PRESETS,
+    [resolvedAppearanceTheme],
+  );
+  const defaultUserMsgColor =
+    resolvedAppearanceTheme === "light"
+      ? DEFAULT_LIGHT_USER_MSG
+      : DEFAULT_DARK_USER_MSG;
   const dictationReady = dictationModelStatus?.state === "ready";
   const dictationProgress = dictationModelStatus?.progress ?? null;
   const globalAgentsStatus = globalAgentsLoading
@@ -552,6 +630,18 @@ export function SettingsView({
     return () => { active = false; };
   }, [t]);
 
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) {
+      return;
+    }
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const syncTheme = () => {
+      setSystemResolvedTheme(media.matches ? "dark" : "light");
+    };
+    syncTheme();
+    media.addEventListener("change", syncTheme);
+    return () => media.removeEventListener("change", syncTheme);
+  }, []);
 
   useEffect(() => {
     setCodexPathDraft(appSettings.codexBin ?? "");
@@ -584,6 +674,10 @@ export function SettingsView({
   useEffect(() => {
     setCodeFontSizeDraft(appSettings.codeFontSize);
   }, [appSettings.codeFontSize]);
+
+  useEffect(() => {
+    setUserMsgHexDraft(normalizedUserMsgColor);
+  }, [normalizedUserMsgColor]);
 
   useEffect(() => {
     setOpenAppDrafts(buildOpenAppDrafts(appSettings.openAppTargets));
@@ -857,6 +951,67 @@ export function SettingsView({
       codeFontSize: clampedSize,
     });
   };
+
+  const handleSaveUserMsgColor = useCallback(
+    async (nextColor: string) => {
+      const normalized = normalizeHexColor(nextColor);
+      if (normalized === normalizedUserMsgColor) {
+        return;
+      }
+      await onUpdateAppSettings({
+        ...appSettings,
+        userMsgColor: normalized,
+      });
+    },
+    [appSettings, normalizedUserMsgColor, onUpdateAppSettings],
+  );
+
+  const handleUserMsgPresetClick = useCallback(
+    (presetColor: string) => {
+      const normalizedPreset = presetColor.toLowerCase();
+      const nextColor =
+        normalizedPreset === defaultUserMsgColor ? "" : normalizedPreset;
+      setUserMsgHexDraft(nextColor);
+      void handleSaveUserMsgColor(nextColor);
+    },
+    [defaultUserMsgColor, handleSaveUserMsgColor],
+  );
+
+  const handleUserMsgColorPickerChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const nextColor = normalizeHexColor(event.target.value);
+      setUserMsgHexDraft(nextColor);
+      void handleSaveUserMsgColor(nextColor);
+    },
+    [handleSaveUserMsgColor],
+  );
+
+  const handleUserMsgHexInputChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const nextValue = event.target.value;
+      setUserMsgHexDraft(nextValue);
+      if (HEX_COLOR_PATTERN.test(nextValue)) {
+        void handleSaveUserMsgColor(nextValue);
+      }
+    },
+    [handleSaveUserMsgColor],
+  );
+
+  const handleResetUserMsgColor = useCallback(() => {
+    setUserMsgHexDraft("");
+    void handleSaveUserMsgColor("");
+  }, [handleSaveUserMsgColor]);
+
+  const isUserMsgPresetActive = useCallback(
+    (presetColor: string) => {
+      const normalizedPreset = presetColor.toLowerCase();
+      if (!normalizedUserMsgColor && normalizedPreset === defaultUserMsgColor) {
+        return true;
+      }
+      return normalizedUserMsgColor === normalizedPreset;
+    },
+    [defaultUserMsgColor, normalizedUserMsgColor],
+  );
 
   const normalizeOpenAppTargets = useCallback(
     (drafts: OpenAppDraft[]): OpenAppTarget[] =>
@@ -1183,9 +1338,7 @@ export function SettingsView({
 
   return (
     <div className="settings-embedded">
-      <div className="settings-header">
-        <div className="settings-title">{t("settings.title")}</div>
-      </div>
+      <div className="settings-header" />
       <div className="settings-body">
         <aside className={`settings-sidebar${sidebarCollapsed ? " is-collapsed" : ""}`}>
             <button
@@ -1950,6 +2103,79 @@ export function SettingsView({
                   </div>
                 </div>
                 <LanguageSelector />
+                <div className="settings-color-config-card">
+                  <div className="settings-color-config-head">
+                    <MessageCircle className="settings-color-config-icon" aria-hidden />
+                    <span className="settings-color-config-title">
+                      {t("settings.userMsgColorLabel")}
+                    </span>
+                  </div>
+                  <div className="settings-color-preset-grid" role="list">
+                    {userMsgPresets.map((preset) => (
+                      <button
+                        key={preset.color}
+                        type="button"
+                        role="listitem"
+                        className={`settings-color-swatch${isUserMsgPresetActive(preset.color) ? " is-active" : ""}`}
+                        onClick={() => handleUserMsgPresetClick(preset.color)}
+                        title={preset.label}
+                        aria-label={`${t("settings.userMsgColorLabel")} ${preset.color}`}
+                        data-testid={`settings-user-msg-color-preset-${preset.color.slice(1)}`}
+                      >
+                        <span
+                          className="settings-color-swatch-inner"
+                          style={{ backgroundColor: preset.color }}
+                        />
+                      </button>
+                    ))}
+                  </div>
+                  <div className="settings-color-custom-row">
+                    <span className="settings-color-custom-label">
+                      {t("settings.userMsgColorCustom")}
+                    </span>
+                    <label className="settings-color-picker" aria-label={t("settings.userMsgColorLabel")}>
+                      <span
+                        className="settings-color-picker-preview"
+                        style={{
+                          backgroundColor: normalizedUserMsgColor || defaultUserMsgColor,
+                        }}
+                      />
+                      <input
+                        type="color"
+                        className="settings-color-picker-input"
+                        value={normalizedUserMsgColor || defaultUserMsgColor}
+                        onChange={handleUserMsgColorPickerChange}
+                        aria-label={t("settings.userMsgColorLabel")}
+                      />
+                    </label>
+                    <input
+                      type="text"
+                      className="settings-input settings-color-hex-input"
+                      value={userMsgHexDraft}
+                      onChange={handleUserMsgHexInputChange}
+                      placeholder="#6e40c9"
+                      maxLength={7}
+                      spellCheck={false}
+                      aria-label={t("settings.userMsgColorLabel")}
+                      data-testid="settings-user-msg-color-hex-input"
+                    />
+                    {normalizedUserMsgColor ? (
+                      <button
+                        type="button"
+                        className="ghost settings-color-reset"
+                        onClick={handleResetUserMsgColor}
+                        data-testid="settings-user-msg-color-reset"
+                      >
+                        <RotateCcw size={14} aria-hidden />
+                        {t("settings.userMsgColorReset")}
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="settings-help settings-color-hint">
+                    <Info size={14} aria-hidden />
+                    <span>{t("settings.userMsgColorHint")}</span>
+                  </div>
+                </div>
                 <div className="settings-toggle-row">
                   <div>
                     <div className="settings-toggle-title">

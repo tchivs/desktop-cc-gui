@@ -50,9 +50,12 @@ const AUTO_TITLE_PENDING_EXPIRE_MS = 20_000;
 
 export function useThreadStorage(): UseThreadStorageResult {
   const threadActivityRef = useRef<ThreadActivityMap>(loadThreadActivity());
-  const pinnedThreadsRef = useRef<PinnedThreadsMap>(loadPinnedThreads());
+  const [initialPinnedThreads] = useState(loadPinnedThreads);
+  const pinnedThreadsRef = useRef<PinnedThreadsMap>(initialPinnedThreads);
   const autoTitlePendingRef = useRef<AutoTitlePendingMap>({});
-  const [pinnedThreadsVersion, setPinnedThreadsVersion] = useState(0);
+  const [pinnedThreadsVersion, setPinnedThreadsVersion] = useState(() =>
+    Object.keys(initialPinnedThreads).length > 0 ? 1 : 0,
+  );
   const [autoTitlePendingVersion, setAutoTitlePendingVersion] = useState(0);
   const customNamesRef = useRef<CustomNamesMap>({});
 
@@ -106,7 +109,11 @@ export function useThreadStorage(): UseThreadStorageResult {
   );
 
   useEffect(() => {
-    pinnedThreadsRef.current = loadPinnedThreads();
+    const reloaded = loadPinnedThreads();
+    pinnedThreadsRef.current = reloaded;
+    if (Object.keys(reloaded).length > 0) {
+      setPinnedThreadsVersion((version) => (version === 0 ? 1 : version));
+    }
   }, []);
 
   const pinThread = useCallback((workspaceId: string, threadId: string): boolean => {

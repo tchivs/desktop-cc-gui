@@ -8,59 +8,52 @@ import { useTranslation } from 'react-i18next';
 import type { ConversationItem } from '../../../../types';
 import {
   parseToolArgs,
-  getFirstStringField,
   getFileName,
   resolveToolStatus,
+  asRecord,
+  pickStringField,
+  EDIT_PATH_KEYS,
+  EDIT_OLD_KEYS,
+  EDIT_NEW_KEYS,
+  EDIT_CONTENT_KEYS,
 } from './toolConstants';
+import { computeDiff } from '../../utils/diffUtils';
 import { FileIcon } from './FileIcon';
 
 interface EditToolBlockProps {
   item: Extract<ConversationItem, { kind: 'tool' }>;
-  isExpanded: boolean;
-  onToggle: (id: string) => void;
-}
-
-interface DiffStats {
-  additions: number;
-  deletions: number;
-}
-
-function computeDiffStats(oldStr: string, newStr: string): DiffStats {
-  const oldLines = oldStr.split('\n');
-  const newLines = newStr.split('\n');
-  if (oldLines.length === 0 && newLines.length === 0) return { additions: 0, deletions: 0 };
-  if (oldLines.length === 0) return { additions: newLines.length, deletions: 0 };
-  if (newLines.length === 0) return { additions: 0, deletions: oldLines.length };
-  const diff = newLines.length - oldLines.length;
-  if (diff >= 0) return { additions: diff || 1, deletions: 0 };
-  return { additions: 0, deletions: -diff };
 }
 
 export const EditToolBlock = memo(function EditToolBlock({
   item,
-  isExpanded: _isExpanded,
-  onToggle: _onToggle,
 }: EditToolBlockProps) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const args = useMemo(() => parseToolArgs(item.detail), [item.detail]);
+  const nestedInput = useMemo(() => asRecord(args?.input), [args]);
+  const nestedArgs = useMemo(() => asRecord(args?.arguments), [args]);
 
-  const filePath = getFirstStringField(args, ['file_path', 'path', 'target_file', 'filename']);
+  const filePath = pickStringField(args, nestedInput, nestedArgs, EDIT_PATH_KEYS);
   const fileName = getFileName(filePath);
 
-  const diff = useMemo(() => {
-    if (!args) return { additions: 0, deletions: 0 };
-    const oldString = (args.old_string as string) ?? '';
-    const newString = (args.new_string as string) ?? '';
+  const { diff, hasStructuredDiff } = useMemo(() => {
+    if (!args && !nestedInput && !nestedArgs) {
+      return { diff: { lines: [], additions: 0, deletions: 0 }, hasStructuredDiff: false };
+    }
+
+    const oldString = pickStringField(args, nestedInput, nestedArgs, EDIT_OLD_KEYS);
+    const newString = pickStringField(args, nestedInput, nestedArgs, EDIT_NEW_KEYS);
     if (oldString || newString) {
-      return computeDiffStats(oldString, newString);
+      return { diff: computeDiff(oldString, newString), hasStructuredDiff: true };
     }
-    const content = (args.content as string) ?? '';
+
+    const content = pickStringField(args, nestedInput, nestedArgs, EDIT_CONTENT_KEYS);
     if (content) {
-      return { additions: content.split('\n').length, deletions: 0 };
+      return { diff: computeDiff('', content), hasStructuredDiff: true };
     }
-    return { additions: 0, deletions: 0 };
-  }, [args]);
+
+    return { diff: { lines: [], additions: 0, deletions: 0 }, hasStructuredDiff: false };
+  }, [args, nestedArgs, nestedInput]);
 
   const status = resolveToolStatus(item.status, Boolean(item.output));
   const isCompleted = status === 'completed';
@@ -79,7 +72,7 @@ export const EditToolBlock = memo(function EditToolBlock({
           <span className="codicon codicon-edit tool-title-icon" />
           <span className="tool-title-text">{t("tools.editFile")}</span>
           {fileName && (
-            <span className="tool-title-summary" style={{ display: 'flex', alignItems: 'center' }}>
+            <span className="tool-title-summary clickable-file" style={{ display: 'flex', alignItems: 'center' }}>
               <span style={{ marginRight: '4px', display: 'flex', alignItems: 'center', width: '16px', height: '16px' }}>
                 <FileIcon fileName={fileName} size={16} />
               </span>
@@ -87,7 +80,7 @@ export const EditToolBlock = memo(function EditToolBlock({
             </span>
           )}
           {(diff.additions > 0 || diff.deletions > 0) && (
-            <span className="edit-item-diff-stats">
+            <span className="edit-item-diff-stats" style={{ marginLeft: '12px' }}>
               {diff.additions > 0 && (
                 <span className="diff-stat-add">+{diff.additions}</span>
               )}
@@ -100,11 +93,41 @@ export const EditToolBlock = memo(function EditToolBlock({
         <div className={`tool-status-indicator ${isError ? 'error' : isCompleted ? 'completed' : 'pending'}`} />
       </div>
 
-      {expanded && item.output && (
-        <div className="task-details" style={{ padding: '12px', border: 'none' }}>
-          <div className="task-field-content" style={{ maxHeight: '300px', overflowY: 'auto' }}>
-            {item.output}
-          </div>
+      {expanded && (
+        <div className="task-details" style={{ padding: 0, border: 'none' }}>
+          {hasStructuredDiff && diff.lines.length > 0 ? (
+            <div className="edit-diff-viewer">
+              {diff.lines.map((line, index) => {
+                const lineClass =
+                  line.type === 'deleted'
+                    ? 'is-deleted'
+                    : line.type === 'added'
+                      ? 'is-added'
+                      : '';
+
+                return (
+                  <div
+                    key={`${line.type}-${index}`}
+                    className={`edit-diff-line ${lineClass}`}
+                  >
+                    <div className="edit-diff-gutter" />
+                    <div className={`edit-diff-sign ${lineClass}`}>
+                      {line.type === 'deleted' ? '-' : line.type === 'added' ? '+' : ' '}
+                    </div>
+                    <pre className="edit-diff-content">
+                      {line.content}
+                    </pre>
+                  </div>
+                );
+              })}
+            </div>
+          ) : item.output ? (
+            <div style={{ padding: '12px' }}>
+              <div className="task-field-content" style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                {item.output}
+              </div>
+            </div>
+          ) : null}
         </div>
       )}
     </div>

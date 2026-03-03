@@ -91,9 +91,15 @@
   border: 1px solid color-mix(in srgb, var(--border-strong) 55%, transparent);
   background: color-mix(in srgb, var(--surface-card) 90%, #ffffff 10%);
   transform: translate(-50%, -50%);
-  transition: none;
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    opacity 0.18s ease,
+    width 0.18s ease,
+    height 0.18s ease;
   box-shadow: inset 0 0 0 4px color-mix(in srgb, var(--text-faint) 38%, transparent);
-  opacity: 0.9;
+  opacity: 0.78;
   outline: none;
   pointer-events: auto;
   cursor: pointer;
@@ -104,14 +110,36 @@
 .messages-anchor-dot:active,
 .messages-anchor-dot:focus-visible {
   transform: translate(-50%, -50%);
+}
+
+.messages-anchor-dot:hover {
+  opacity: 0.92;
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border-strong));
+  box-shadow:
+    inset 0 0 0 4px color-mix(in srgb, var(--accent) 34%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.messages-anchor-dot:focus-visible {
   outline: none;
+  opacity: 1;
+  border-color: color-mix(in srgb, var(--accent) 62%, transparent);
+  box-shadow:
+    inset 0 0 0 4px color-mix(in srgb, var(--accent) 42%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--surface-messages) 92%, transparent),
+    0 0 0 5px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 .messages-anchor-dot.is-active {
-  background: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 88%, transparent);
+  --messages-anchor-active: var(--text-accent, #3b82f6);
+  width: 14px;
+  height: 14px;
+  background: color-mix(in srgb, var(--messages-anchor-active) 28%, var(--surface-card));
+  border-color: color-mix(in srgb, var(--messages-anchor-active) 90%, var(--border-strong));
   transform: translate(-50%, -50%);
-  box-shadow: none;
+  box-shadow:
+    inset 0 0 0 4px color-mix(in srgb, var(--messages-anchor-active) 92%, #ffffff 8%),
+    0 6px 14px color-mix(in srgb, var(--messages-anchor-active) 34%, transparent);
   opacity: 1;
 }
 
@@ -281,7 +309,7 @@
 .bubble {
   max-width: 70%;
   padding: 10px 14px;
-  border-radius: 14px;
+  border-radius: 12px;
   background: var(--surface-bubble);
   font-size: 14px;
   line-height: 1.45;
@@ -400,7 +428,15 @@
 }
 
 .message.user .bubble {
-  background: var(--surface-bubble-user);
+  max-width: 85%;
+  background: var(--color-message-user-bg, var(--surface-bubble-user));
+  color: var(--color-message-user-text, #ffffff);
+  border-radius: 12px 12px 2px 12px;
+  border: 1px solid color-mix(
+    in srgb,
+    var(--color-message-user-text, #ffffff) 10%,
+    transparent
+  );
 }
 
 .message.assistant .bubble {
@@ -411,6 +447,76 @@
   border: none;
   border-radius: 0;
   box-shadow: none;
+}
+
+.user-collapsible-block {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.user-collapsible-content {
+  position: relative;
+  transition: max-height 0.3s ease-out;
+}
+
+.user-collapsible-text-content {
+  color: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.user-collapsible-overlay {
+  position: absolute;
+  bottom: 0;
+  left: -14px;
+  width: calc(100% + 28px);
+  height: 60px;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    var(--color-message-user-bg, var(--surface-bubble-user))
+  );
+  pointer-events: none;
+  z-index: 1;
+}
+
+.user-collapsible-toggle {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: calc(100% + 28px);
+  height: 20px;
+  margin-top: 0;
+  margin-right: -14px;
+  margin-bottom: -10px;
+  margin-left: -14px;
+  padding: 2px 0;
+  border: none;
+  border-top: 1px solid color-mix(
+    in srgb,
+    var(--color-message-user-text, #ffffff) 18%,
+    transparent
+  );
+  border-radius: 0 0 12px 12px;
+  background: var(--color-message-user-bg, var(--surface-bubble-user));
+  color: color-mix(in srgb, var(--color-message-user-text, #ffffff) 74%, transparent);
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.user-collapsible-toggle:hover {
+  background: var(--color-message-user-bg, var(--surface-bubble-user));
+  color: var(--color-message-user-text, #ffffff);
+}
+
+.user-collapsible-toggle .codicon {
+  font-size: 14px;
+  transition: transform 0.2s;
+}
+
+.user-collapsible-toggle .codicon.is-expanded {
+  transform: rotate(180deg);
 }
 
 .memory-context-summary-card {
@@ -1503,30 +1609,25 @@
 
 .markdown ul,
 .markdown ol {
-  padding-left: 18px;
-  margin: 0;
+  margin: 10px 0;
+  max-width: 100%;
   list-style-position: outside;
 }
 
-.markdown ul ul,
-.markdown ol ol,
-.markdown ul ol,
-.markdown ol ul {
-  margin-top: 6px;
-  margin-left: 8px;
-  padding-left: 14px;
+.markdown ul {
+  padding-left: 24px;
+  list-style-type: disc;
+}
+
+.markdown ol {
+  padding-left: 30px;
+  list-style-type: decimal;
 }
 
 .markdown li {
-  margin: 4px 0;
-  padding-left: 4px;
-}
-
-.message.assistant .markdown li > ul,
-.message.assistant .markdown li > ol {
-  margin-top: 6px;
-  margin-left: 8px;
-  padding-left: 14px;
+  margin-bottom: 4px;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
 }
 
 .markdown li p {

@@ -179,6 +179,7 @@ export type AppSettings = {
   lastComposerReasoningEffort: string | null;
   uiScale: number;
   theme: ThemePreference;
+  userMsgColor: string;
   usageShowRemaining: boolean;
   showMessageAnchors: boolean;
   uiFontFamily: string;

@@ -39,11 +39,11 @@ describe("Messages", () => {
 
     const bubble = container.querySelector(".message-bubble");
     const grid = container.querySelector(".message-image-grid");
-    const markdown = container.querySelector(".markdown");
+    const userText = container.querySelector(".user-collapsible-text-content");
     expect(bubble).toBeTruthy();
     expect(grid).toBeTruthy();
-    expect(markdown).toBeTruthy();
-    if (grid && markdown) {
+    expect(userText).toBeTruthy();
+    if (grid && userText) {
       expect(bubble?.firstChild).toBe(grid);
     }
     const openButton = screen.getByRole("button", { name: "Open image 1" });
@@ -73,11 +73,11 @@ describe("Messages", () => {
       />,
     );
 
-    const markdown = container.querySelector(".markdown");
-    expect(markdown).toBeTruthy();
-    expect(markdown?.textContent ?? "").toContain("Line 1");
-    expect(markdown?.textContent ?? "").toContain("item 1");
-    expect(markdown?.textContent ?? "").toContain("item 2");
+    const userText = container.querySelector(".user-collapsible-text-content");
+    expect(userText).toBeTruthy();
+    expect(userText?.textContent ?? "").toContain("Line 1");
+    expect(userText?.textContent ?? "").toContain("item 1");
+    expect(userText?.textContent ?? "").toContain("item 2");
   });
 
   it("keeps literal [image] text when images are attached", () => {
@@ -102,8 +102,8 @@ describe("Messages", () => {
       />,
     );
 
-    const markdown = container.querySelector(".markdown");
-    expect(markdown?.textContent ?? "").toContain("Literal [image] token");
+    const userText = container.querySelector(".user-collapsible-text-content");
+    expect(userText?.textContent ?? "").toContain("Literal [image] token");
   });
 
   it("shows only user input for assembled prompt payload in user bubble", () => {
@@ -128,8 +128,8 @@ describe("Messages", () => {
       />,
     );
 
-    const markdown = container.querySelector(".markdown");
-    expect(markdown?.textContent ?? "").toBe("你好啊");
+    const userText = container.querySelector(".user-collapsible-text-content");
+    expect(userText?.textContent ?? "").toBe("你好啊");
   });
 
   it("hides code fallback prefix and keeps only actual user request", () => {
@@ -155,14 +155,14 @@ describe("Messages", () => {
       />,
     );
 
-    const markdown = container.querySelector(".markdown");
+    const userText = container.querySelector(".user-collapsible-text-content");
     const bubble = container.querySelector(
       '.message-bubble[data-collab-mode="code"]',
     );
     const badge = container.querySelector(
       '.message-bubble[data-collab-mode="code"] .message-mode-badge.is-code',
     );
-    expect(markdown?.textContent ?? "").toBe("你好");
+    expect(userText?.textContent ?? "").toBe("你好");
     expect(bubble).toBeTruthy();
     expect(badge).toBeTruthy();
     expect((badge?.textContent ?? "").trim()).toBe("");
@@ -354,7 +354,7 @@ describe("Messages", () => {
     expect(container.querySelector(".markdown-codex-canvas")).toBeTruthy();
   });
 
-  it("uses conversationState plan as the quick-view source when legacy plan differs", () => {
+  it("uses conversationState items when rendering grouped edit tools", () => {
     const legacyPlan = {
       turnId: "turn-legacy",
       explanation: "Legacy plan",
@@ -418,9 +418,59 @@ describe("Messages", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
-    expect(screen.getByText("State step")).toBeTruthy();
+    expect(screen.getByText("a.ts")).toBeTruthy();
+    expect(screen.getByText("b.ts")).toBeTruthy();
     expect(screen.queryByText("Legacy step")).toBeNull();
+  });
+
+  it("hides TodoWrite tool blocks from chat stream", () => {
+    const items: ConversationItem[] = [
+      {
+        id: "tool-read-1",
+        kind: "tool",
+        toolType: "toolCall",
+        title: "Tool: read",
+        detail: JSON.stringify({ file_path: "src/keep-a.ts" }),
+        status: "completed",
+        output: "content",
+      },
+      {
+        id: "tool-todo-1",
+        kind: "tool",
+        toolType: "toolCall",
+        title: "Tool: TodoWrite",
+        detail: JSON.stringify({ todos: [{ content: "step1" }] }),
+        status: "completed",
+        output: "todo updated",
+      },
+      {
+        id: "tool-edit-1",
+        kind: "tool",
+        toolType: "toolCall",
+        title: "Tool: edit",
+        detail: JSON.stringify({
+          file_path: "src/keep-b.ts",
+          old_string: "a",
+          new_string: "b",
+        }),
+        status: "completed",
+      },
+    ];
+
+    render(
+      <Messages
+        items={items}
+        threadId="thread-1"
+        workspaceId="ws-1"
+        isThinking={false}
+        openTargets={[]}
+        selectedOpenAppId=""
+      />,
+    );
+
+    expect(screen.getByText("keep-a.ts")).toBeTruthy();
+    expect(screen.getByText("keep-b.ts")).toBeTruthy();
+    expect(screen.queryByText("待办列表")).toBeNull();
   });
 
   it("matches extended lead keywords with semantic icons", () => {
@@ -679,9 +729,9 @@ describe("Messages", () => {
     );
 
     expect(container.querySelector(".memory-context-summary-card")).toBeTruthy();
-    const markdown = container.querySelector(".markdown");
-    expect(markdown?.textContent ?? "").toBe("我的手机是什么牌子的");
-    expect(markdown?.textContent ?? "").not.toContain("用户输入：你知道苹果手机吗");
+    const userText = container.querySelector(".user-collapsible-text-content");
+    expect(userText?.textContent ?? "").toBe("我的手机是什么牌子的");
+    expect(userText?.textContent ?? "").not.toContain("用户输入：你知道苹果手机吗");
     const toggle = container.querySelector(".memory-context-summary-toggle");
     expect(toggle).toBeTruthy();
     if (!toggle) {
@@ -693,6 +743,60 @@ describe("Messages", () => {
       expect(content?.textContent ?? "").toContain("[对话记录]");
       expect(content?.textContent ?? "").toContain("助手输出摘要");
     });
+  });
+
+  it("shows collapsible user input toggle when content overflows and expands on click", () => {
+    const originalScrollHeight = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      "scrollHeight",
+    );
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        return this.classList.contains("user-collapsible-content") ? 280 : 0;
+      },
+    });
+
+    try {
+      const items: ConversationItem[] = [
+        {
+          id: "user-collapse-1",
+          kind: "message",
+          role: "user",
+          text: Array.from({ length: 24 }, (_, index) => `Line ${index + 1}`).join("\n"),
+        },
+      ];
+
+      const { container } = render(
+        <Messages
+          items={items}
+          threadId="thread-1"
+          workspaceId="ws-1"
+          isThinking={false}
+          openTargets={[]}
+          selectedOpenAppId=""
+        />,
+      );
+
+      const toggle = container.querySelector(".user-collapsible-toggle") as HTMLButtonElement | null;
+      const content = container.querySelector(".user-collapsible-content") as HTMLDivElement | null;
+      expect(toggle).toBeTruthy();
+      expect(content).toBeTruthy();
+      expect(content?.style.maxHeight).toBe("160px");
+
+      if (toggle) {
+        fireEvent.click(toggle);
+      }
+
+      expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+      expect(content?.style.maxHeight).toBe("none");
+    } finally {
+      if (originalScrollHeight) {
+        Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+      } else {
+        delete (HTMLElement.prototype as { scrollHeight?: number }).scrollHeight;
+      }
+    }
   });
 
   it("renders user-only anchors and scrolls on click", () => {

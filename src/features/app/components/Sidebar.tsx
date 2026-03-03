@@ -324,9 +324,6 @@ export function Sidebar({
   );
 
   const pinnedThreadRows = useMemo(() => {
-    if (pinnedThreadsVersion === 0) {
-      return [];
-    }
     type ThreadRow = { thread: ThreadSummary; depth: number };
     const groups: Array<{
       pinTime: number;

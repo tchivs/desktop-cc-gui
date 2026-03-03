@@ -195,4 +195,46 @@ describe("Sidebar", () => {
     expect(menu.getByRole("menuitem", { name: "Git" })).toBeTruthy();
     expect(menu.queryByRole("menuitem", { name: "Open home" })).toBeNull();
   });
+
+  it("shows pinned threads even when pinned version is zero", () => {
+    const workspace = {
+      id: "ws-1",
+      name: "codemoss",
+      path: "/tmp/codemoss",
+      connected: true,
+      kind: "main" as const,
+      settings: {
+        sidebarCollapsed: false,
+        worktreeSetupScript: null,
+      },
+    };
+    const thread = {
+      id: "thread-1",
+      name: "Pinned Restored",
+      updatedAt: 123,
+    };
+
+    render(
+      <Sidebar
+        {...baseProps}
+        workspaces={[workspace]}
+        groupedWorkspaces={[
+          {
+            id: null,
+            name: "Ungrouped",
+            workspaces: [workspace],
+          },
+        ]}
+        threadsByWorkspace={{ "ws-1": [thread] }}
+        getPinTimestamp={(workspaceId, threadId) =>
+          workspaceId === "ws-1" && threadId === "thread-1" ? 111 : null
+        }
+        isThreadPinned={(workspaceId, threadId) =>
+          workspaceId === "ws-1" && threadId === "thread-1"
+        }
+      />,
+    );
+
+    expect(screen.getByText("Pinned Restored")).toBeTruthy();
+  });
 });

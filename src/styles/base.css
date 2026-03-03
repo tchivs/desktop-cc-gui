@@ -23,7 +23,9 @@
   --surface-command: #0c0e14;
   --surface-diff-card: #0e121c;
   --surface-bubble: #2a2e3a;
-  --surface-bubble-user: #2e4a74;
+  --surface-bubble-user: #005fb8;
+  --color-message-user-bg: #005fb8;
+  --color-message-user-text: #ffffff;
   --surface-context-core: #10141e;
   --surface-popover: #10141e;
 }

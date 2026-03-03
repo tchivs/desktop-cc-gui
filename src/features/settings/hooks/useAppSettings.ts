@@ -16,10 +16,23 @@ import {
 import { getClientStoreSync } from "../../../services/clientStorage";
 import { normalizeOpenAppTargets } from "../../app/utils/openApp";
 import { getDefaultInterruptShortcut } from "../../../utils/shortcuts";
+import { normalizeHexColor } from "../../../utils/colorUtils";
 
 const allowedThemes = new Set(["system", "light", "dark", "dim"]);
 const allowedComposerSendShortcuts = new Set(["enter", "cmdEnter"]);
 const SEARCH_SHORTCUT_DISALLOWED = new Set(["cmd+p", "ctrl+p"]);
+
+function readLegacyUserMsgColor(): string {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  try {
+    const stored = window.localStorage.getItem("userMsgColor");
+    return normalizeHexColor(stored);
+  } catch {
+    return "";
+  }
+}
 
 function normalizeShortcutValue(value: string | null | undefined): string | null {
   if (!value) {
@@ -69,6 +82,7 @@ const defaultSettings: AppSettings = {
   lastComposerReasoningEffort: null,
   uiScale: UI_SCALE_DEFAULT,
   theme: "system",
+  userMsgColor: "",
   usageShowRemaining: false,
   showMessageAnchors: true,
   uiFontFamily: DEFAULT_UI_FONT_FAMILY,
@@ -104,7 +118,17 @@ const defaultSettings: AppSettings = {
   selectedOpenAppId: DEFAULT_OPEN_APP_ID,
 };
 
-function normalizeAppSettings(settings: AppSettings): AppSettings {
+function normalizeAppSettings(
+  settings: AppSettings,
+  options?: {
+    allowLegacyUserMsgColorFallback?: boolean;
+  },
+): AppSettings {
+  const normalizedUserMsgColor = normalizeHexColor(settings.userMsgColor);
+  const fallbackUserMsgColor =
+    options?.allowLegacyUserMsgColorFallback && !normalizedUserMsgColor
+      ? readLegacyUserMsgColor()
+      : normalizedUserMsgColor;
   const normalizedTargets =
     settings.openAppTargets && settings.openAppTargets.length
       ? normalizeOpenAppTargets(settings.openAppTargets)
@@ -128,6 +152,7 @@ function normalizeAppSettings(settings: AppSettings): AppSettings {
     codexArgs: settings.codexArgs?.trim() ? settings.codexArgs.trim() : null,
     uiScale: clampUiScale(settings.uiScale),
     theme: allowedThemes.has(settings.theme) ? settings.theme : "system",
+    userMsgColor: fallbackUserMsgColor,
     uiFontFamily: normalizeFontFamily(
       settings.uiFontFamily,
       DEFAULT_UI_FONT_FAMILY,
@@ -158,10 +183,14 @@ export function useAppSettings() {
       try {
         const response = await getAppSettings();
         if (active) {
+          const allowLegacyUserMsgColorFallback =
+            (response as Partial<AppSettings>).userMsgColor == null;
           setSettings(
             normalizeAppSettings({
               ...defaultSettings,
               ...response,
+            }, {
+              allowLegacyUserMsgColorFallback,
             }),
           );
         }

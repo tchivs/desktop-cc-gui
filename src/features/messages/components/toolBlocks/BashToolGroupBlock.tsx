@@ -8,9 +8,13 @@ import type { ConversationItem } from '../../../../types';
 import { highlightLine } from '../../../../utils/syntax';
 import {
   buildCommandSummary,
+  parseToolArgs,
+  getFirstStringField,
   truncateText,
   resolveToolStatus,
   type ToolStatusTone,
+  asRecord,
+  getFirstCommandField,
 } from './toolConstants';
 
 type ToolItem = Extract<ConversationItem, { kind: 'tool' }>;
@@ -31,6 +35,7 @@ interface ParsedBashItem {
 
 const MAX_VISIBLE_ITEMS = 3.5;
 const ITEM_HEIGHT = 32;
+const EXPANDED_MAX_HEIGHT = 400;
 const MAX_OUTPUT_LINES = 100;
 const ERROR_LINE_PATTERN = /(?:\berror\b|\bfailed\b|\bexception\b)/i;
 
@@ -46,9 +51,22 @@ function cleanCommand(text: string): string {
 }
 
 function parseBashItem(item: ToolItem): ParsedBashItem {
-  const command = cleanCommand(buildCommandSummary(item, { includeDetail: false }));
-  const description = '';
-  const displayText = truncateText(command, 60) || 'Command';
+  const args = parseToolArgs(item.detail);
+  const nestedInput = asRecord(args?.input);
+  const nestedArgs = asRecord(args?.arguments);
+  const commandKeys = ['command', 'cmd', 'script', 'shell_command', 'bash', 'argv'];
+  const descriptionKeys = ['description', 'summary', 'label', 'title', 'task'];
+  const commandFromArgs =
+    getFirstCommandField(args, commandKeys) ||
+    getFirstCommandField(nestedInput, commandKeys) ||
+    getFirstCommandField(nestedArgs, commandKeys);
+  const summaryCommand = buildCommandSummary(item, { includeDetail: false });
+  const command = cleanCommand(commandFromArgs || summaryCommand);
+  const description =
+    getFirstStringField(args, descriptionKeys) ||
+    getFirstStringField(nestedInput, descriptionKeys) ||
+    getFirstStringField(nestedArgs, descriptionKeys);
+  const displayText = truncateText(description || command, 60) || 'Command';
   const output = item.output ?? '';
   const status = resolveToolStatus(item.status, Boolean(item.output));
 
@@ -67,18 +85,12 @@ export const BashToolGroupBlock = memo(function BashToolGroupBlock({
   const prevCountRef = useRef(items.length);
 
   const parsed = useMemo(() => items.map(parseBashItem), [items]);
+  const totalCount = parsed.length;
 
   const completedCount = parsed.filter((p) => p.status === 'completed').length;
   const failedCount = parsed.filter((p) => p.status === 'failed').length;
   const hasProcessing = parsed.some((p) => p.status === 'processing');
 
-  const groupStatus: ToolStatusTone = hasProcessing
-    ? 'processing'
-    : failedCount > 0
-      ? 'failed'
-      : 'completed';
-
-  // 自动展开最后一个正在运行的命令
   useEffect(() => {
     const lastProcessing = [...parsed].reverse().find((p) => p.status === 'processing');
     if (lastProcessing) {
@@ -86,7 +98,6 @@ export const BashToolGroupBlock = memo(function BashToolGroupBlock({
     }
   }, [parsed]);
 
-  // 流式时自动滚动
   useEffect(() => {
     if (items.length > prevCountRef.current && timelineRef.current) {
       timelineRef.current.scrollTop = timelineRef.current.scrollHeight;
@@ -104,42 +115,64 @@ export const BashToolGroupBlock = memo(function BashToolGroupBlock({
     setExpandedItemId((prev) => (prev === id ? null : id));
   }, []);
 
-  const progressText = failedCount > 0
-    ? t("tools.failedCount", { count: failedCount })
-    : `${completedCount}/${items.length}`;
+  const needsScroll = totalCount > MAX_VISIBLE_ITEMS;
+  const baseHeight = needsScroll
+    ? MAX_VISIBLE_ITEMS * ITEM_HEIGHT
+    : totalCount * ITEM_HEIGHT;
+  const listHeight = expandedItemId ? EXPANDED_MAX_HEIGHT : baseHeight;
+  const overflowY = (needsScroll || expandedItemId) ? 'auto' : 'hidden';
 
-  const listHeight = Math.min(parsed.length, MAX_VISIBLE_ITEMS) * ITEM_HEIGHT;
-  const needsScroll = parsed.length > MAX_VISIBLE_ITEMS && !expandedItemId;
+  const progressNode = (() => {
+    if (failedCount > 0) {
+      return (
+        <span className="bash-group-progress error">
+          <span className="codicon codicon-warning" style={{ fontSize: '12px', marginRight: '4px' }} />
+          {failedCount} {t("tools.bashGroupFailed")}
+        </span>
+      );
+    }
+    if (totalCount > 0 && completedCount === totalCount) {
+      return (
+        <span className="bash-group-progress completed">
+          <span className="codicon codicon-check" style={{ fontSize: '12px', marginRight: '4px' }} />
+          {t("tools.bashGroupAllCompleted")}
+        </span>
+      );
+    }
+    return (
+      <span className="bash-group-progress">
+        {completedCount}/{totalCount}
+      </span>
+    );
+  })();
 
   return (
-    <div className="task-container">
+    <div className="task-container bash-group-container">
       <div
-        className="task-header"
+        className="task-header bash-group-header"
         onClick={() => setIsExpanded((prev) => !prev)}
-        style={{
-          borderBottom: isExpanded ? '1px solid var(--border-primary)' : undefined,
-        }}
       >
         <div className="task-title-section">
-          <span className="codicon codicon-terminal tool-title-icon" />
-          <span className="tool-title-text">{t("tools.batchRun")}</span>
-          <span className="tool-title-summary" style={{
-            color: 'var(--text-secondary)',
-            marginLeft: '4px',
-            flexShrink: 0,
-          }}>
-            ({items.length})
+          <span
+            className={`codicon ${
+              isExpanded ? 'codicon-chevron-down' : 'codicon-chevron-right'
+            } bash-group-chevron`}
+          />
+          <span className="tool-title-text">
+            {t("tools.bashGroupBatchRun")} ({totalCount})
           </span>
-          <span className={`bash-group-progress ${groupStatus}`}>{progressText}</span>
         </div>
-        <div className={`tool-status-indicator ${groupStatus === 'failed' ? 'error' : groupStatus === 'completed' ? 'completed' : 'pending'}`} />
+        <div className="bash-group-summary">{progressNode}</div>
       </div>
 
       {isExpanded && (
         <div
           className="bash-group-timeline"
           ref={timelineRef}
-          style={needsScroll ? { maxHeight: listHeight, overflowY: 'auto' } : undefined}
+          style={{
+            maxHeight: `${listHeight + 16}px`,
+            overflowY,
+          }}
         >
           {parsed.map((entry, index) => {
             const isLast = index === parsed.length - 1;
@@ -153,7 +186,7 @@ export const BashToolGroupBlock = memo(function BashToolGroupBlock({
               <div key={entry.id} className="bash-timeline-item">
                 <div className="bash-timeline-connector">
                   <div className={`bash-timeline-line${isLast ? ' last' : ''}`} />
-                  <div className={`bash-timeline-node ${entry.status}`} />
+                  <div className="bash-timeline-node" />
                 </div>
                 <div
                   className={`bash-timeline-content${isItemExpanded ? ' expanded' : ''}`}
@@ -169,6 +202,15 @@ export const BashToolGroupBlock = memo(function BashToolGroupBlock({
                 >
                   <div className="bash-timeline-row">
                     <span className="bash-timeline-description">{entry.displayText}</span>
+                    <div
+                      className={`tool-status-indicator ${
+                        entry.status === 'failed'
+                          ? 'error'
+                          : entry.status === 'completed'
+                            ? 'completed'
+                            : 'pending'
+                      } bash-item-status`}
+                    />
                   </div>
                   {isItemExpanded && (
                     <div className="bash-timeline-detail">

@@ -23,6 +23,7 @@ const runCodexDoctorMock = vi.mocked(runCodexDoctor);
 describe("useAppSettings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.localStorage.clear();
   });
 
   afterEach(() => {
@@ -34,6 +35,7 @@ describe("useAppSettings", () => {
       {
         uiScale: UI_SCALE_MAX + 1,
         theme: "nope" as unknown as AppSettings["theme"],
+        userMsgColor: "#XYZXYZ",
         backendMode: "remote",
         remoteBackendHost: "example:1234",
         uiFontFamily: "",
@@ -48,6 +50,7 @@ describe("useAppSettings", () => {
 
     expect(result.current.settings.uiScale).toBe(UI_SCALE_MAX);
     expect(result.current.settings.theme).toBe("system");
+    expect(result.current.settings.userMsgColor).toBe("");
     expect(result.current.settings.uiFontFamily).toMatch(/^Monaco,/);
     expect(result.current.settings.codeFontFamily).toMatch(/^Monaco,/);
     expect(result.current.settings.codeFontSize).toBe(16);
@@ -156,5 +159,16 @@ describe("useAppSettings", () => {
     await expect(result.current.doctor("/bin/codex", null)).resolves.toEqual(
       response,
     );
+  });
+
+  it("uses legacy localStorage user message color when settings value is missing", async () => {
+    window.localStorage.setItem("userMsgColor", "#6E40C9");
+    getAppSettingsMock.mockResolvedValue({} as AppSettings);
+
+    const { result } = renderHook(() => useAppSettings());
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.settings.userMsgColor).toBe("#6e40c9");
   });
 });

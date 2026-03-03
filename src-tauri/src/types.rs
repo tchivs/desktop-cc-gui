@@ -598,6 +598,8 @@ pub(crate) struct AppSettings {
     pub(crate) ui_scale: f64,
     #[serde(default = "default_theme", rename = "theme")]
     pub(crate) theme: String,
+    #[serde(default = "default_user_msg_color", rename = "userMsgColor")]
+    pub(crate) user_msg_color: String,
     #[serde(
         default = "default_usage_show_remaining",
         rename = "usageShowRemaining"
@@ -762,6 +764,10 @@ fn default_ui_scale() -> f64 {
 
 fn default_theme() -> String {
     "system".to_string()
+}
+
+fn default_user_msg_color() -> String {
+    String::new()
 }
 
 fn default_usage_show_remaining() -> bool {
@@ -1052,6 +1058,7 @@ impl Default for AppSettings {
             last_composer_reasoning_effort: None,
             ui_scale: 1.0,
             theme: default_theme(),
+            user_msg_color: default_user_msg_color(),
             usage_show_remaining: default_usage_show_remaining(),
             show_message_anchors: default_show_message_anchors(),
             ui_font_family: default_ui_font_family(),
@@ -1219,6 +1226,7 @@ mod tests {
         assert!(settings.last_composer_reasoning_effort.is_none());
         assert!((settings.ui_scale - 1.0).abs() < f64::EPSILON);
         assert_eq!(settings.theme, "system");
+        assert!(settings.user_msg_color.is_empty());
         assert!(!settings.usage_show_remaining);
         assert!(settings.show_message_anchors);
         assert!(settings.ui_font_family.starts_with("Monaco"));

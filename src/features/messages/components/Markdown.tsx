@@ -131,8 +131,7 @@ function normalizeListIndentation(value: string) {
     const orderedMatch = line.match(/^(\s*)\d+\.\s+/);
     if (orderedMatch) {
       const rawIndent = orderedMatch[1].length;
-      const normalizedIndent =
-        rawIndent > 0 && rawIndent < 4 ? 4 : rawIndent;
+      const normalizedIndent = rawIndent;
       activeOrderedItem = true;
       orderedBaseIndent = normalizedIndent + 4;
       orderedIndentOffset = null;
@@ -146,10 +145,6 @@ function normalizeListIndentation(value: string) {
     if (bulletMatch) {
       const rawIndent = bulletMatch[1].length;
       let targetIndent = rawIndent;
-
-      if (!activeOrderedItem && rawIndent > 0 && rawIndent < 4) {
-        targetIndent = 4;
-      }
 
       if (activeOrderedItem) {
         if (orderedIndentOffset === null && rawIndent < orderedBaseIndent) {

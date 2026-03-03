@@ -367,7 +367,7 @@ vi.mock("react-i18next", () => ({
         "approval.showSecret": "Show",
         "approval.hideSecret": "Hide",
         "approval.submitFailed": "Submit failed. Please retry.",
-        "tools.userInputRequest": "User Input Request",
+        "tools.userInputRequest": "Ask User Question",
         "tools.planQuickView": "Plan",
         "tools.openFullPlanPanel": "Open full Plan panel",
         "statusPanel.tabPlan": "Plan",

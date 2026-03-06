@@ -4,7 +4,6 @@ import ListChecks from "lucide-react/dist/esm/icons/list-checks";
 import Bot from "lucide-react/dist/esm/icons/bot";
 import FileEdit from "lucide-react/dist/esm/icons/file-edit";
 import ListTodo from "lucide-react/dist/esm/icons/list-todo";
-import Terminal from "lucide-react/dist/esm/icons/terminal";
 import type { ConversationItem } from "../../../types";
 import type { TurnPlan } from "../../../types";
 import type { TabType } from "../types";
@@ -13,7 +12,6 @@ import { TodoList } from "./TodoList";
 import { SubagentList } from "./SubagentList";
 import { FileChangesList } from "./FileChangesList";
 import { PlanList } from "./PlanList";
-import { CommandList } from "./CommandList";
 
 interface StatusPanelProps {
   items: ConversationItem[];
@@ -45,10 +43,6 @@ export const StatusPanel = memo(function StatusPanel({
     subagentCompleted,
     subagentTotal,
     hasRunningSubagent,
-    commands,
-    commandCompleted,
-    commandTotal,
-    hasRunningCommand,
     totalAdditions,
     totalDeletions,
   } = useStatusPanelData(items, { isCodexEngine });
@@ -141,9 +135,6 @@ export const StatusPanel = memo(function StatusPanel({
                 isCodexEngine={isCodexEngine}
               />
             )}
-            {openTab === "command" && (
-              <CommandList commands={commands} enableExpand={isCodexEngine} />
-            )}
           </div>
         </div>
       )}
@@ -197,24 +188,6 @@ export const StatusPanel = memo(function StatusPanel({
               <span className="sp-stat-add">+{totalAdditions}</span>
               <span className="sp-stat-mod">-{totalDeletions}</span>
             </span>
-          </button>
-        )}
-
-        {isCodexEngine && commandTotal > 0 && (
-          <button
-            type="button"
-            className={`sp-tab${openTab === "command" ? " sp-tab-active" : ""}`}
-            onClick={() => handleTabClick("command")}
-            aria-expanded={openTab === "command"}
-          >
-            <Terminal size={14} className="sp-tab-icon" />
-            <span className="sp-tab-label">{t("statusPanel.tabCommands")}</span>
-            <span className="sp-tab-count">
-              {commandCompleted}/{commandTotal}
-            </span>
-            {isProcessing && hasRunningCommand && (
-              <span className="sp-tab-loading" />
-            )}
           </button>
         )}
 

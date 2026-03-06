@@ -39,6 +39,7 @@ import {
   setClaudeAlwaysThinkingEnabled,
   switchClaudeProvider,
   updateClaudeProvider,
+  getWorkspaceDirectoryChildren,
 } from '../../../../services/tauri';
 
 // Re-export the handle type for Composer to use
@@ -531,13 +532,10 @@ export const ChatInputBoxAdapter = forwardRef<ChatInputBoxHandle, ChatInputBoxAd
         if (signal.aborted) {
           throw new DOMException('Aborted', 'AbortError');
         }
-        const sourceDirectories = directories ?? [];
-        const sourceFiles = files ?? [];
-        const normalizedQuery = query.trim().toLowerCase();
-        const maxSuggestions = 500;
+        const maxSuggestions = 200;
         const results: FileItem[] = [];
 
-        const pushDirectory = (path: string) => {
+        const pushDirectoryFromPath = (path: string) => {
           const normalizedPath = `${normalizePath(path)}/`;
           const name = fileNameFromPath(path);
           results.push({
@@ -548,7 +546,7 @@ export const ChatInputBoxAdapter = forwardRef<ChatInputBoxHandle, ChatInputBoxAd
             extension: '',
           });
         };
-        const pushFile = (path: string) => {
+        const pushFileFromPath = (path: string) => {
           const normalizedPath = normalizePath(path);
           const name = fileNameFromPath(path);
           results.push({
@@ -559,52 +557,101 @@ export const ChatInputBoxAdapter = forwardRef<ChatInputBoxHandle, ChatInputBoxAd
             extension: extensionFromFileName(name),
           });
         };
+        const pushFromResponse = (response: { files: string[]; directories: string[] }) => {
+          for (const dir of response.directories) {
+            pushDirectoryFromPath(dir);
+            if (results.length >= maxSuggestions) return;
+          }
+          for (const file of response.files) {
+            pushFileFromPath(file);
+            if (results.length >= maxSuggestions) return;
+          }
+        };
+
+        const normalizedQuery = query.trim();
+
+        // Parse query: separate directory path from search fragment
+        // e.g. "src/com" -> { dirPath: "src", fragment: "com" }
+        // e.g. "src/"   -> { dirPath: "src", fragment: "" }
+        // e.g. "but"    -> { dirPath: "", fragment: "but" }
+        const lastSlashIndex = normalizedQuery.lastIndexOf('/');
+        const dirPath = lastSlashIndex >= 0 ? normalizedQuery.slice(0, lastSlashIndex) : '';
+        const fragment = lastSlashIndex >= 0 ? normalizedQuery.slice(lastSlashIndex + 1) : normalizedQuery;
+        const lowerFragment = fragment.toLowerCase();
+
+        // If we have a workspace ID and a directory path, use lazy loading
+        if (workspaceId && dirPath) {
+          try {
+            const response = await getWorkspaceDirectoryChildren(workspaceId, dirPath);
+            if (signal.aborted) {
+              throw new DOMException('Aborted', 'AbortError');
+            }
+            if (!lowerFragment) {
+              // No search term - show all direct children of the directory
+              pushFromResponse(response);
+            } else {
+              // Filter by fragment
+              for (const dir of response.directories) {
+                const name = fileNameFromPath(dir);
+                if (name.toLowerCase().includes(lowerFragment)) {
+                  pushDirectoryFromPath(dir);
+                  if (results.length >= maxSuggestions) break;
+                }
+              }
+              for (const file of response.files) {
+                const name = fileNameFromPath(file);
+                if (name.toLowerCase().includes(lowerFragment)) {
+                  pushFileFromPath(file);
+                  if (results.length >= maxSuggestions) break;
+                }
+              }
+            }
+            return results;
+          } catch (error) {
+            if ((error as Error).name === 'AbortError') throw error;
+            // Fallback to local filtering on error
+          }
+        }
+
+        // For root-level browsing or search, use the pre-loaded file/directory arrays
+        const sourceDirectories = directories ?? [];
+        const sourceFiles = files ?? [];
 
         if (!normalizedQuery) {
+          // No query: show only root-level entries (direct children of workspace root)
           for (const path of sourceDirectories) {
-            pushDirectory(path);
-            if (results.length >= maxSuggestions) {
-              return results;
+            if (!path.includes('/')) {
+              pushDirectoryFromPath(path);
+              if (results.length >= maxSuggestions) return results;
             }
           }
           for (const path of sourceFiles) {
-            pushFile(path);
-            if (results.length >= maxSuggestions) {
-              return results;
+            if (!path.includes('/')) {
+              pushFileFromPath(path);
+              if (results.length >= maxSuggestions) return results;
             }
           }
           return results;
         }
 
+        // Search query without directory path: search by name across all entries
         for (const path of sourceDirectories) {
-          const normalizedPath = normalizePath(path);
           const name = fileNameFromPath(path);
-          if (
-            name.toLowerCase().includes(normalizedQuery) ||
-            normalizedPath.toLowerCase().includes(normalizedQuery)
-          ) {
-            pushDirectory(path);
-            if (results.length >= maxSuggestions) {
-              return results;
-            }
+          if (name.toLowerCase().includes(lowerFragment) || normalizePath(path).toLowerCase().includes(lowerFragment)) {
+            pushDirectoryFromPath(path);
+            if (results.length >= maxSuggestions) return results;
           }
         }
         for (const path of sourceFiles) {
-          const normalizedPath = normalizePath(path);
           const name = fileNameFromPath(path);
-          if (
-            name.toLowerCase().includes(normalizedQuery) ||
-            normalizedPath.toLowerCase().includes(normalizedQuery)
-          ) {
-            pushFile(path);
-            if (results.length >= maxSuggestions) {
-              return results;
-            }
+          if (name.toLowerCase().includes(lowerFragment) || normalizePath(path).toLowerCase().includes(lowerFragment)) {
+            pushFileFromPath(path);
+            if (results.length >= maxSuggestions) return results;
           }
         }
         return results;
       },
-      [directories, files],
+      [directories, files, workspaceId],
     );
 
     const manualMemoryCompletionProvider = useCallback(

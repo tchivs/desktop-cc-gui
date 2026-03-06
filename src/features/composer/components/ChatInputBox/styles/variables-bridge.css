@@ -25,7 +25,7 @@
   --text-primary: var(--text-primary, #e6e7ea);
   --text-secondary: var(--text-muted, #b3b3b3);
   --text-muted: var(--text-faint, #666666);
-  --dropdown-bg: var(--surface-popover, #0a0e14);
+  --dropdown-bg: #1f2028;
   --tooltip-bg: #1a1c24;
   --dropdown-border: var(--border-strong, #353540);
   --dropdown-hover: var(--surface-hover, #2a2d2e);
@@ -49,8 +49,8 @@
   --text-primary: var(--text-quiet, #333333);
   --text-secondary: var(--text-subtle, #666666);
   --text-muted: var(--text-faint, #999999);
-  --dropdown-bg: var(--surface-popover, #ffffff);
-  --tooltip-bg: var(--surface-popover, #ffffff);
+  --dropdown-bg: #ffffff;
+  --tooltip-bg: #ffffff;
   --dropdown-border: color-mix(in srgb, var(--border-strong, rgba(15, 23, 36, 0.14)) 88%, transparent);
   --dropdown-hover: color-mix(in srgb, var(--surface-hover, rgba(15, 23, 36, 0.06)) 90%, transparent);
   --dropdown-selected: #4d8ff0;
@@ -76,8 +76,8 @@
     --text-primary: var(--text-quiet, #333333);
     --text-secondary: var(--text-subtle, #666666);
     --text-muted: var(--text-faint, #999999);
-    --dropdown-bg: var(--surface-popover, #ffffff);
-    --tooltip-bg: var(--surface-popover, #ffffff);
+    --dropdown-bg: #ffffff;
+    --tooltip-bg: #ffffff;
     --dropdown-border: color-mix(in srgb, var(--border-strong, rgba(15, 23, 36, 0.14)) 88%, transparent);
     --dropdown-hover: color-mix(in srgb, var(--surface-hover, rgba(15, 23, 36, 0.06)) 90%, transparent);
     --dropdown-selected: #4d8ff0;

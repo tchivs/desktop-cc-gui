@@ -4,6 +4,9 @@
 }
 
 button {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
   border: none;
   border-radius: 10px;
   padding: 8px 14px;
@@ -50,5 +53,4 @@ button:disabled {
   width: 16px;
   height: 16px;
 }
-
 

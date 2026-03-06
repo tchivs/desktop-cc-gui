@@ -3,7 +3,7 @@
    ============================================================ */
 .completion-dropdown {
   position: fixed;
-  background: var(--dropdown-bg);
+  background: var(--dropdown-bg, #252526);
   border: 1px solid var(--dropdown-border);
   border-radius: 6px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);

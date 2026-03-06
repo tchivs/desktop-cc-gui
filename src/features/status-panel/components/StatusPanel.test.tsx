@@ -17,26 +17,6 @@ const editToolItem: Extract<ConversationItem, { kind: "tool" }> = {
   ],
 };
 
-const commandToolItem: Extract<ConversationItem, { kind: "tool" }> = {
-  id: "tool-command-1",
-  kind: "tool",
-  toolType: "commandExecution",
-  title: "Tool: bash",
-  detail: '{"command":"npm run typecheck"}',
-  status: "completed",
-  output: "ok",
-};
-
-const commandToolWithCwdDetail: Extract<ConversationItem, { kind: "tool" }> = {
-  id: "tool-command-cwd-1",
-  kind: "tool",
-  toolType: "commandExecution",
-  title: "Command: git diff -- CLAUDE.md README.md",
-  detail: "/Users/chenxiangning/code/AI/reach/ai-reach",
-  status: "completed",
-  output: "ok",
-};
-
 const taskToolItem: Extract<ConversationItem, { kind: "tool" }> = {
   id: "tool-task-1",
   kind: "tool",
@@ -155,7 +135,7 @@ describe("StatusPanel", () => {
   it("shows codex activity tabs without inline plan tab", () => {
     render(
       <StatusPanel
-        items={[editToolItem, commandToolItem, taskToolItem]}
+        items={[editToolItem, taskToolItem]}
         isProcessing={false}
         plan={planSample}
         isPlanMode
@@ -168,7 +148,6 @@ describe("StatusPanel", () => {
     expect(screen.getByText("statusPanel.tabAgents")).toBeTruthy();
     expect(screen.getByText("statusPanel.tabEdits")).toBeTruthy();
     expect(screen.queryByText("Plan")).toBeNull();
-    expect(screen.getByText("statusPanel.tabCommands")).toBeTruthy();
     const allTabs = document.querySelectorAll(".sp-tab-half");
     expect(allTabs.length).toBe(0);
   });
@@ -219,52 +198,5 @@ describe("StatusPanel", () => {
     expect(screen.getAllByText("0/0").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText("statusPanel.tabAgents")).toBeTruthy();
     expect(screen.getByText("statusPanel.tabEdits")).toBeTruthy();
-  });
-
-  it("opens commands popover in codex mode", () => {
-    render(
-      <StatusPanel
-        items={[commandToolItem]}
-        isProcessing={false}
-        isCodexEngine
-      />,
-    );
-
-    fireEvent.click(screen.getByText("statusPanel.tabCommands"));
-    expect(screen.getByText("npm run typecheck")).toBeTruthy();
-  });
-
-  it("prefers command title over cwd detail for codex command summary", () => {
-    render(
-      <StatusPanel
-        items={[commandToolWithCwdDetail]}
-        isProcessing={false}
-        isCodexEngine
-      />,
-    );
-
-    fireEvent.click(screen.getByText("statusPanel.tabCommands"));
-    expect(screen.getByText("git diff -- CLAUDE.md README.md")).toBeTruthy();
-    expect(
-      screen.queryByText("/Users/chenxiangning/code/AI/reach/ai-reach"),
-    ).toBeNull();
-  });
-
-  it("toggles command expansion on click in codex mode", () => {
-    render(
-      <StatusPanel
-        items={[commandToolWithCwdDetail]}
-        isProcessing={false}
-        isCodexEngine
-      />,
-    );
-
-    fireEvent.click(screen.getByText("statusPanel.tabCommands"));
-    const commandNode = screen.getByText("git diff -- CLAUDE.md README.md");
-    expect(commandNode.className).not.toContain("is-expanded");
-    fireEvent.click(commandNode.closest(".sp-command-item") as HTMLElement);
-    expect(commandNode.className).toContain("is-expanded");
-    fireEvent.click(commandNode.closest(".sp-command-item") as HTMLElement);
-    expect(commandNode.className).not.toContain("is-expanded");
   });
 });

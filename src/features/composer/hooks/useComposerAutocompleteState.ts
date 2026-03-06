@@ -42,7 +42,7 @@ type UseComposerAutocompleteStateArgs = {
   setSelectionStart: (next: number | null) => void;
 };
 
-const MAX_FILE_SUGGESTIONS = 500;
+const MAX_FILE_SUGGESTIONS = 200;
 const MAX_MEMORY_SUGGESTIONS = 50;
 const FILE_TRIGGER_PREFIX = new RegExp("^(?:\\s|[\"'`]|\\(|\\[|\\{)$");
 
@@ -262,26 +262,33 @@ export function useComposerAutocompleteState({
       isFileTriggerActive(text, selectionStart)
         ? (() => {
             const query = getFileTriggerQuery(text, selectionStart) ?? "";
-            const visibleDirectories = directories.filter((path) => !gitignoredDirectories?.has(path));
-            const visibleFiles = files.filter((path) => !gitignoredFiles?.has(path));
             const { parentPath, fragment } = splitFileQueryScope(query);
-            const directoryItems: AutocompleteItem[] = visibleDirectories
-              .filter((path) => isDirectChildPath(path, parentPath))
-              .filter((path) => matchesFileFragment(path, fragment))
-              .sort((a, b) => a.localeCompare(b))
-              .slice(0, MAX_FILE_SUGGESTIONS)
-              .map((path) => ({
-                id: `dir:${path}`,
-                label: `${path}/`,
-                insertText: `${path}/`,
-                isDirectory: true,
-              }));
-            const fileItemsList: AutocompleteItem[] = visibleFiles
-              .filter((path) => isDirectChildPath(path, parentPath))
-              .filter((path) => matchesFileFragment(path, fragment))
-              .sort((a, b) => a.localeCompare(b))
-              .slice(0, MAX_FILE_SUGGESTIONS)
-              .map((path) => ({
+            // Combine filter predicates to avoid multiple passes over large arrays
+            const matchedDirectories: string[] = [];
+            const matchedFiles: string[] = [];
+            for (const path of directories) {
+              if (matchedDirectories.length >= MAX_FILE_SUGGESTIONS) break;
+              if (gitignoredDirectories?.has(path)) continue;
+              if (!isDirectChildPath(path, parentPath)) continue;
+              if (!matchesFileFragment(path, fragment)) continue;
+              matchedDirectories.push(path);
+            }
+            for (const path of files) {
+              if (matchedFiles.length >= MAX_FILE_SUGGESTIONS) break;
+              if (gitignoredFiles?.has(path)) continue;
+              if (!isDirectChildPath(path, parentPath)) continue;
+              if (!matchesFileFragment(path, fragment)) continue;
+              matchedFiles.push(path);
+            }
+            matchedDirectories.sort((a, b) => a.localeCompare(b));
+            matchedFiles.sort((a, b) => a.localeCompare(b));
+            const directoryItems: AutocompleteItem[] = matchedDirectories.map((path) => ({
+              id: `dir:${path}`,
+              label: `${path}/`,
+              insertText: `${path}/`,
+              isDirectory: true,
+            }));
+            const fileItemsList: AutocompleteItem[] = matchedFiles.map((path) => ({
               id: path,
               label: path,
               insertText: path,

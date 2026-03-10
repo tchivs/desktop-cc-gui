@@ -694,8 +694,8 @@ export function Sidebar({
               data-tauri-drag-region="false"
             >
               <svg className="sidebar-primary-nav-icon" aria-hidden width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M14.7842 2.9688C15.0826 2.67043 15.4873 2.50281 15.9092 2.50281C16.3312 2.50281 16.7359 2.67043 17.0342 2.9688C17.3326 3.26717 17.5002 3.67184 17.5002 4.0938C17.5002 4.51575 17.3326 4.92043 17.0342 5.2188L10.2745 11.9793C10.0964 12.1572 9.8764 12.2875 9.63475 12.358L7.48 12.988C7.41546 13.0069 7.34705 13.008 7.28193 12.9913C7.21681 12.9746 7.15737 12.9407 7.10983 12.8932C7.0623 12.8457 7.02842 12.7862 7.01173 12.7211C6.99505 12.656 6.99618 12.5876 7.015 12.523L7.645 10.3683C7.71589 10.1268 7.8464 9.90709 8.0245 9.7293L14.7842 2.9688Z" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M10 3.25H6.25C4.59315 3.25 3.25 4.59315 3.25 6.25V13.75C3.25 15.4069 4.59315 16.75 6.25 16.75H13.75C15.4069 16.75 16.75 15.4069 16.75 13.75V10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+                <path d="M14.7842 2.9688C15.0826 2.67043 15.4873 2.50281 15.9092 2.50281C16.3312 2.50281 16.7359 2.67043 17.0342 2.9688C17.3326 3.26717 17.5002 3.67184 17.5002 4.0938C17.5002 4.51575 17.3326 4.92043 17.0342 5.2188L10.2745 11.9793C10.0964 12.1572 9.8764 12.2875 9.63475 12.358L7.48 12.988C7.41546 13.0069 7.34705 13.008 7.28193 12.9913C7.21681 12.9746 7.15737 12.9407 7.10983 12.8932C7.0623 12.8457 7.02842 12.7862 7.01173 12.7211C6.99505 12.656 6.99618 12.5876 7.015 12.523L7.645 10.3683C7.71589 10.1268 7.8464 9.90709 8.0245 9.7293L14.7842 2.9688Z" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M10 3.25H6.25C4.59315 3.25 3.25 4.59315 3.25 6.25V13.75C3.25 15.4069 4.59315 16.75 6.25 16.75H13.75C15.4069 16.75 16.75 15.4069 16.75 13.75V10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
               </svg>
               <span className="sidebar-primary-nav-text">{t("sidebar.quickNewThread")}</span>
             </button>
@@ -708,9 +708,9 @@ export function Sidebar({
               data-tauri-drag-region="false"
             >
               <svg className="sidebar-primary-nav-icon" aria-hidden width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M10 3.25V16C10 16.1989 9.92098 16.3897 9.78033 16.5303C9.63968 16.671 9.44891 16.75 9.25 16.75H4.75C4.35218 16.75 3.97064 16.592 3.68934 16.3107C3.40804 16.0294 3.25 15.6478 3.25 15.25V4.75C3.25 4.35218 3.40804 3.97064 3.68934 3.68934C3.97064 3.40804 4.35218 3.25 4.75 3.25H15.25C15.6478 3.25 16.0294 3.40804 16.3107 3.68934C16.592 3.97064 16.75 4.35218 16.75 4.75V9.25C16.75 9.44891 16.671 9.63968 16.5303 9.78033C16.3897 9.92098 16.1989 10 16 10H3.25" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M13 15.25H17.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M15.25 17.5V13" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M10 3.25V16C10 16.1989 9.92098 16.3897 9.78033 16.5303C9.63968 16.671 9.44891 16.75 9.25 16.75H4.75C4.35218 16.75 3.97064 16.592 3.68934 16.3107C3.40804 16.0294 3.25 15.6478 3.25 15.25V4.75C3.25 4.35218 3.40804 3.97064 3.68934 3.68934C3.97064 3.40804 4.35218 3.25 4.75 3.25H15.25C15.6478 3.25 16.0294 3.40804 16.3107 3.68934C16.592 3.97064 16.75 4.35218 16.75 4.75V9.25C16.75 9.44891 16.671 9.63968 16.5303 9.78033C16.3897 9.92098 16.1989 10 16 10H3.25" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M13 15.25H17.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M15.25 17.5V13" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
               <span className="sidebar-primary-nav-text">{t("sidebar.quickAutomation")}</span>
             </button>
@@ -723,11 +723,8 @@ export function Sidebar({
               data-tauri-drag-region="false"
             >
               <svg className="sidebar-primary-nav-icon" aria-hidden width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M17.5 7.48607C17.5 6.72852 17.072 6.036 16.3944 5.69721L10.8944 2.94721C10.3314 2.66569 9.66863 2.66569 9.10557 2.94721L3.60557 5.69721C2.928 6.036 2.5 6.72852 2.5 7.48607V12.5139C2.5 13.2715 2.928 13.964 3.60557 14.3028L9.10557 17.0528C9.66863 17.3343 10.3314 17.3343 10.8944 17.0528L16.3944 14.3028C17.072 13.964 17.5 13.2715 17.5 12.5139V7.48607Z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round"/>
-                <path d="M3 6.5L10 10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M10 17V10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M16.5 6.5L10 10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M13.75 4.375L6.25 8.125" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M17.2888 17.2899L13.7734 13.7745" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M9.19094 15.67C12.7697 15.67 15.6709 12.7688 15.6709 9.18996C15.6709 5.61116 12.7697 2.70996 9.19094 2.70996C5.61213 2.70996 2.71094 5.61116 2.71094 9.18996C2.71094 12.7688 5.61213 15.67 9.19094 15.67Z" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
               <span className="sidebar-primary-nav-text">{quickSearchLabel}</span>
               <span className="sidebar-primary-nav-shortcut" aria-hidden>

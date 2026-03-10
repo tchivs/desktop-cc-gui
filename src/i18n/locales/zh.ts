@@ -1791,12 +1791,12 @@ const zh = {
     shortSecondsIn: "{{value}}秒后",
     shortMinutesAgo: "{{value}}分钟前",
     shortMinutesIn: "{{value}}分钟后",
-    shortMinutes: "{{value}}分",
-    shortHours: "{{value}}时",
-    shortDays: "{{value}}天",
-    shortWeeks: "{{value}}周",
-    shortMonths: "{{value}}月",
-    shortYears: "{{value}}年",
+    shortMinutes: "{{value}} 分",
+    shortHours: "{{value}} 时",
+    shortDays: "{{value}} 天",
+    shortWeeks: "{{value}} 周",
+    shortMonths: "{{value}} 月",
+    shortYears: "{{value}} 年",
   },
 
   // 关于

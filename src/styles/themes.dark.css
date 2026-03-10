@@ -1,11 +1,11 @@
 :root {
-  font-family: "Monaco", "Menlo", "Consolas", monospace;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
   color: var(--text-primary);
   background-color: #0d0f14;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   color-scheme: dark;
-  --ui-font-family: "Monaco", "Menlo", "Consolas", monospace;
+  --ui-font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
   --code-font-family: "SF Mono", "SFMono-Regular", Menlo, Monaco,
     "Sarasa Mono SC", "Noto Sans Mono CJK SC", "Microsoft YaHei Mono", monospace;
   --code-font-size: 11px;

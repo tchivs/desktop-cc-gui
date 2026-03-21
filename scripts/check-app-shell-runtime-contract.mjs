@@ -1,6 +1,6 @@
-import { spawnSync } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
+import { ESLint } from "eslint";
 import ts from "typescript";
 
 const APP_SHELL_FILE = "src/app-shell.tsx";
@@ -378,28 +378,32 @@ function sorted(items) {
   return [...items].sort((a, b) => a.localeCompare(b));
 }
 
-function runNoUndefCheck() {
-  const command = process.platform === "win32" ? "npx.cmd" : "npx";
-  const args = [
-    "eslint",
-    ...CONTRACT_FILES,
-    "--rule",
-    "no-undef:error",
-    "--no-eslintrc",
-    "--env",
-    "browser",
-    "--env",
-    "es2021",
-    "--env",
-    "node",
-    "--parser",
-    "@typescript-eslint/parser",
-    "--parser-options",
-    PARSER_OPTIONS_JSON,
-  ];
+async function runNoUndefCheck() {
+  const eslint = new ESLint({
+    useEslintrc: false,
+    overrideConfig: {
+      env: {
+        browser: true,
+        es2021: true,
+        node: true,
+      },
+      parser: "@typescript-eslint/parser",
+      parserOptions: JSON.parse(PARSER_OPTIONS_JSON),
+      rules: {
+        "no-undef": "error",
+      },
+    },
+    errorOnUnmatchedPattern: false,
+  });
 
-  const result = spawnSync(command, args, { stdio: "inherit" });
-  if (result.status !== 0) {
+  const results = await eslint.lintFiles(CONTRACT_FILES);
+  const errorCount = results.reduce((total, item) => total + item.errorCount, 0);
+  if (errorCount > 0) {
+    const formatter = await eslint.loadFormatter("stylish");
+    const formatted = formatter.format(results);
+    if (formatted) {
+      console.error(formatted);
+    }
     throw new Error("no-undef check failed.");
   }
 }
@@ -424,8 +428,8 @@ function checkContract(contract) {
   return issues;
 }
 
-function main() {
-  runNoUndefCheck();
+async function main() {
+  await runNoUndefCheck();
 
   const program = ts.createProgram({
     rootNames: CONTRACT_FILES.map((file) => toAbsolutePath(file)),
@@ -556,7 +560,7 @@ function main() {
 }
 
 try {
-  main();
+  await main();
 } catch (error) {
   console.error(
     `check-app-shell-runtime-contract: FAILED\n- ${

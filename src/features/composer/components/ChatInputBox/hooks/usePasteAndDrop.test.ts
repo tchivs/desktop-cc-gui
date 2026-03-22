@@ -82,6 +82,7 @@ function createHarness(disabled = false) {
     renderFileTags,
     onInput,
     setHasContent,
+    setInternalAttachments,
     unmount() {
       act(() => root.unmount());
       container.remove();
@@ -307,6 +308,205 @@ describe("usePasteAndDrop path insertion", () => {
       });
     });
     expect(harness.result.isDragOver).toBe(false);
+    harness.unmount();
+  });
+
+  it("normalizes window drag-drop position for high DPI coordinates", () => {
+    const harness = createHarness();
+    const originalDpr = window.devicePixelRatio;
+    Object.defineProperty(window, "devicePixelRatio", {
+      value: 2,
+      configurable: true,
+    });
+
+    const dragOverEvent = {
+      clientX: 100,
+      clientY: 100,
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+      dataTransfer: {
+        types: ["text/plain"],
+        getData: () => "",
+        dropEffect: "none",
+      },
+    } as unknown as React.DragEvent;
+
+    act(() => {
+      harness.result.handleDragOver(dragOverEvent);
+    });
+
+    act(() => {
+      windowDropHandler?.({
+        payload: {
+          type: "drop",
+          // Simulate physical-pixel coordinates from Windows/Tauri on scale=2
+          position: { x: 200, y: 200 },
+          paths: ["/tmp/inside.ts"],
+        },
+      });
+    });
+
+    expect(harness.editable.textContent).toContain("@/tmp/inside.ts");
+
+    Object.defineProperty(window, "devicePixelRatio", {
+      value: originalDpr,
+      configurable: true,
+    });
+    harness.unmount();
+  });
+
+  it("accepts high DPI window drop without prior dragover when scaled point is inside", () => {
+    const harness = createHarness();
+    const originalDpr = window.devicePixelRatio;
+    Object.defineProperty(window, "devicePixelRatio", {
+      value: 2,
+      configurable: true,
+    });
+
+    act(() => {
+      windowDropHandler?.({
+        payload: {
+          type: "drop",
+          // Raw point is outside (x=400 > right=300), scaled point is inside (x=200, y=50)
+          position: { x: 400, y: 100 },
+          paths: ["/tmp/scaled-inside.ts"],
+        },
+      });
+    });
+
+    expect(harness.editable.textContent).toContain("@/tmp/scaled-inside.ts");
+
+    Object.defineProperty(window, "devicePixelRatio", {
+      value: originalDpr,
+      configurable: true,
+    });
+    harness.unmount();
+  });
+
+  it("treats dropped image path payload as image attachment instead of file reference", () => {
+    const harness = createHarness();
+    const dropEvent = {
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+      dataTransfer: {
+        files: [] as File[],
+        getData: (type: string) =>
+          type === "text/plain" ? "C:\\Users\\demo\\Desktop\\bug.png" : "",
+      },
+    } as unknown as React.DragEvent;
+
+    act(() => {
+      harness.result.handleDrop(dropEvent);
+    });
+
+    expect(harness.editable.textContent).toBe("");
+    expect(harness.setInternalAttachments).toHaveBeenCalled();
+
+    const updater = harness.setInternalAttachments.mock.calls[0]?.[0] as
+      | ((prev: Array<{ data: string; fileName: string; mediaType: string }>) => Array<{ data: string; fileName: string; mediaType: string }>)
+      | undefined;
+    expect(typeof updater).toBe("function");
+    const next = updater ? updater([]) : [];
+    expect(next).toHaveLength(1);
+    expect(next[0].fileName).toBe("bug.png");
+    expect(next[0].mediaType).toBe("image/png");
+    expect(next[0].data).toBe("C:\\Users\\demo\\Desktop\\bug.png");
+
+    harness.unmount();
+  });
+
+  it("splits window drop paths into image attachments and file references", () => {
+    const harness = createHarness();
+
+    const dragOverEvent = {
+      clientX: 100,
+      clientY: 100,
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+      dataTransfer: {
+        types: ["text/plain"],
+        getData: () => "",
+        dropEffect: "none",
+      },
+    } as unknown as React.DragEvent;
+    act(() => {
+      harness.result.handleDragOver(dragOverEvent);
+    });
+
+    act(() => {
+      windowDropHandler?.({
+        payload: {
+          type: "drop",
+          position: { x: 100, y: 100 },
+          paths: [
+            "/tmp/screen.png",
+            "/tmp/readme.ts",
+            "C:\\Users\\demo\\Desktop\\PIC.JPG",
+          ],
+        },
+      });
+    });
+
+    expect(harness.editable.textContent).toContain("@/tmp/readme.ts");
+    expect(harness.editable.textContent).not.toContain("screen.png");
+    expect(harness.editable.textContent).not.toContain("PIC.JPG");
+
+    expect(harness.setInternalAttachments).toHaveBeenCalled();
+    const updater = harness.setInternalAttachments.mock.calls[0]?.[0] as
+      | ((prev: Array<{ data: string; fileName: string; mediaType: string }>) => Array<{ data: string; fileName: string; mediaType: string }>)
+      | undefined;
+    const next = updater ? updater([]) : [];
+    expect(next).toHaveLength(2);
+    expect(next[0].fileName).toBe("screen.png");
+    expect(next[0].mediaType).toBe("image/png");
+    expect(next[1].fileName).toBe("PIC.JPG");
+    expect(next[1].mediaType).toBe("image/jpeg");
+
+    harness.unmount();
+  });
+
+  it("dedupes image-path attachments across windows path separator and drive-case variants", () => {
+    const harness = createHarness();
+
+    const firstDrop = {
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+      dataTransfer: {
+        files: [] as File[],
+        getData: (type: string) =>
+          type === "text/plain" ? "C:\\Users\\demo\\Desktop\\bug.png" : "",
+      },
+    } as unknown as React.DragEvent;
+
+    const secondDrop = {
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+      dataTransfer: {
+        files: [] as File[],
+        getData: (type: string) =>
+          type === "text/plain" ? "c:/Users/demo/Desktop/bug.png" : "",
+      },
+    } as unknown as React.DragEvent;
+
+    act(() => {
+      harness.result.handleDrop(firstDrop);
+    });
+    act(() => {
+      harness.result.handleDrop(secondDrop);
+    });
+
+    expect(harness.setInternalAttachments).toHaveBeenCalledTimes(2);
+    const updater1 = harness.setInternalAttachments.mock.calls[0]?.[0] as
+      | ((prev: Array<{ data: string; fileName: string; mediaType: string }>) => Array<{ data: string; fileName: string; mediaType: string }>)
+      | undefined;
+    const updater2 = harness.setInternalAttachments.mock.calls[1]?.[0] as
+      | ((prev: Array<{ data: string; fileName: string; mediaType: string }>) => Array<{ data: string; fileName: string; mediaType: string }>)
+      | undefined;
+    const state1 = updater1 ? updater1([]) : [];
+    const state2 = updater2 ? updater2(state1) : state1;
+    expect(state2).toHaveLength(1);
+    expect(state2[0].data).toBe("C:\\Users\\demo\\Desktop\\bug.png");
+
     harness.unmount();
   });
 });

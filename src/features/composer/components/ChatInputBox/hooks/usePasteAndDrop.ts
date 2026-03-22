@@ -60,6 +60,105 @@ interface UsePasteAndDropReturn {
 
 const MAX_DROP_TEXT_LENGTH = 100000;
 const FILE_TREE_DRAG_BRIDGE_MAX_AGE_MS = 15000;
+const IMAGE_EXTENSIONS = [
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".bmp",
+  ".tiff",
+  ".tif",
+  ".svg",
+];
+
+function isImagePath(path: string): boolean {
+  const lower = path.trim().toLowerCase();
+  return IMAGE_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
+function resolveImageMediaType(path: string): string {
+  const lower = path.trim().toLowerCase();
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".gif")) return "image/gif";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".bmp")) return "image/bmp";
+  if (lower.endsWith(".tif") || lower.endsWith(".tiff")) return "image/tiff";
+  if (lower.endsWith(".svg")) return "image/svg+xml";
+  return "image/png";
+}
+
+function fileNameFromPath(path: string): string {
+  const parts = path.split(/[/\\]/).filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : path;
+}
+
+function normalizeDragPosition(
+  position: { x: number; y: number },
+  lastClientPosition: { x: number; y: number } | null,
+  dropZone?: Element | null,
+) {
+  const scale = window.devicePixelRatio || 1;
+  if (scale === 1) {
+    return position;
+  }
+  const scaled = { x: position.x / scale, y: position.y / scale };
+  if (dropZone) {
+    const rawInside = isDropInsideElement(dropZone, position);
+    const scaledInside = isDropInsideElement(dropZone, scaled);
+    if (rawInside !== scaledInside) {
+      return scaledInside ? scaled : position;
+    }
+  }
+  if (!lastClientPosition) {
+    return position;
+  }
+  const logicalDistance = Math.hypot(
+    position.x - lastClientPosition.x,
+    position.y - lastClientPosition.y,
+  );
+  const scaledDistance = Math.hypot(
+    scaled.x - lastClientPosition.x,
+    scaled.y - lastClientPosition.y,
+  );
+  return scaledDistance < logicalDistance ? scaled : position;
+}
+
+function partitionDroppedPaths(paths: string[]): {
+  imagePaths: string[];
+  nonImagePaths: string[];
+} {
+  const imagePaths: string[] = [];
+  const nonImagePaths: string[] = [];
+  for (const path of paths) {
+    if (isImagePath(path)) {
+      imagePaths.push(path);
+      continue;
+    }
+    nonImagePaths.push(path);
+  }
+  return { imagePaths, nonImagePaths };
+}
+
+function consumeDroppedPaths(
+  paths: string[],
+  appendImagePathAttachments: (paths: string[]) => boolean,
+  handlePathInsertionWithDedupGuard: (paths: string[]) => void,
+): boolean {
+  const validPaths = dedupeAndValidateFilePaths(paths);
+  if (validPaths.length === 0) {
+    return false;
+  }
+  const { imagePaths, nonImagePaths } = partitionDroppedPaths(validPaths);
+  if (imagePaths.length > 0) {
+    appendImagePathAttachments(imagePaths);
+  }
+  if (nonImagePaths.length > 0) {
+    handlePathInsertionWithDedupGuard(nonImagePaths);
+  }
+  return true;
+}
 
 function clearFileTreeDragBridge() {
   if (typeof window === "undefined") {
@@ -230,8 +329,43 @@ export function usePasteAndDrop({
 }: UsePasteAndDropOptions): UsePasteAndDropReturn {
   const lastDropSignatureRef = useRef<{ signature: string; time: number } | null>(null);
   const isDragOverRef = useRef(false);
+  const lastClientPositionRef = useRef<{ x: number; y: number } | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [dragPreviewNames, setDragPreviewNames] = useState<string[]>([]);
+
+  const appendImagePathAttachments = useCallback(
+    (paths: string[]) => {
+      const imagePaths = dedupeAndValidateFilePaths(paths).filter(isImagePath);
+      if (imagePaths.length === 0) {
+        return false;
+      }
+      setInternalAttachments((prev) => {
+        const existing = new Set(
+          prev
+            .map((item) => normalizePathForComparison(item.data))
+            .filter(Boolean),
+        );
+        const next = [...prev];
+        for (const path of imagePaths) {
+          const normalizedPath = path.trim();
+          const dedupeKey = normalizePathForComparison(normalizedPath);
+          if (!normalizedPath || !dedupeKey || existing.has(dedupeKey)) {
+            continue;
+          }
+          existing.add(dedupeKey);
+          next.push({
+            id: generateId(),
+            fileName: fileNameFromPath(normalizedPath),
+            mediaType: resolveImageMediaType(normalizedPath),
+            data: normalizedPath,
+          });
+        }
+        return next;
+      });
+      return true;
+    },
+    [setInternalAttachments],
+  );
 
   useEffect(() => {
     isDragOverRef.current = isDragOver;
@@ -309,7 +443,11 @@ export function usePasteAndDrop({
       if (!dropZone) {
         return;
       }
-      const position = event.payload.position;
+      const position = normalizeDragPosition(
+        event.payload.position,
+        lastClientPositionRef.current,
+        dropZone,
+      );
       const isInside = isDropInsideElement(dropZone, position);
       const droppedPaths = event.payload.paths ?? [];
 
@@ -334,9 +472,11 @@ export function usePasteAndDrop({
         if (!isInside) {
           return;
         }
-        if (droppedPaths.length > 0) {
-          handlePathInsertionWithDedupGuard(droppedPaths);
-        }
+        consumeDroppedPaths(
+          droppedPaths,
+          appendImagePathAttachments,
+          handlePathInsertionWithDedupGuard,
+        );
         return;
       }
       if (event.payload.type === 'leave') {
@@ -350,6 +490,7 @@ export function usePasteAndDrop({
     disabled,
     dropZoneRef,
     editableRef,
+    appendImagePathAttachments,
     handlePathInsertionWithDedupGuard,
     resetDragHint,
   ]);
@@ -592,6 +733,7 @@ export function usePasteAndDrop({
       setIsDragOver(true);
       setDragPreviewNames([]);
     }
+    lastClientPositionRef.current = { x: e.clientX, y: e.clientY };
     if (typeof window !== "undefined" && window.__fileTreeDragActive === true) {
       window.__fileTreeDragPosition = { x: e.clientX, y: e.clientY };
       window.__fileTreeDragOverChat = true;
@@ -639,9 +781,11 @@ export function usePasteAndDrop({
       if (files && files.length > 0) {
         for (let i = 0; i < files.length; i++) {
           const file = files[i];
+          const fileLooksLikeImage =
+            file.type.startsWith("image/") || isImagePath(file.name);
 
           // Only process image files
-          if (file.type.startsWith('image/')) {
+          if (fileLooksLikeImage) {
             hasImageFile = true;
             const reader = new FileReader();
             reader.onload = () => {
@@ -656,7 +800,10 @@ export function usePasteAndDrop({
               const attachment: Attachment = {
                 id: generateId(),
                 fileName: file.name || `dropped-image-${Date.now()}.${ext}`,
-                mediaType: file.type || 'image/png',
+                mediaType:
+                  file.type && file.type.startsWith("image/")
+                    ? file.type
+                    : resolveImageMediaType(file.name),
                 data: base64,
               };
 
@@ -675,8 +822,14 @@ export function usePasteAndDrop({
       }
 
       const dropPaths = extractPathCandidatesFromDataTransfer(e.dataTransfer);
-      if (dropPaths.length > 0) {
-        handlePathInsertionWithDedupGuard(dropPaths);
+      if (
+        dropPaths.length > 0 &&
+        consumeDroppedPaths(
+          dropPaths,
+          appendImagePathAttachments,
+          handlePathInsertionWithDedupGuard,
+        )
+      ) {
         clearFileTreeDragBridge();
         resetDragHint();
         return;
@@ -692,6 +845,7 @@ export function usePasteAndDrop({
     },
     [
       disabled,
+      appendImagePathAttachments,
       setInternalAttachments,
       handlePathInsertionWithDedupGuard,
       resetDragHint,

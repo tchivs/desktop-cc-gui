@@ -880,6 +880,51 @@ describe("threadReducer", () => {
     expect(messages[1]?.text).toBe("第二段（完整）");
   });
 
+  it("segments claude reasoning deltas when stream segment advances", () => {
+    const threadId = "claude:session-reasoning-seg";
+    const processingState: ThreadState = {
+      ...initialState,
+      threadStatusById: {
+        [threadId]: {
+          isProcessing: true,
+          hasUnread: false,
+          isReviewing: false,
+          isContextCompacting: false,
+          processingStartedAt: Date.now(),
+          lastDurationMs: null,
+          heartbeatPulse: 0,
+        },
+      },
+    };
+
+    const withFirst = threadReducer(processingState, {
+      type: "appendReasoningContent",
+      threadId,
+      itemId: "reasoning-seg",
+      delta: "先读取项目结构",
+    });
+    const withSegment = threadReducer(withFirst, {
+      type: "incrementAgentSegment",
+      threadId,
+    });
+    const withSecond = threadReducer(withSegment, {
+      type: "appendReasoningContent",
+      threadId,
+      itemId: "reasoning-seg",
+      delta: "再检查关键配置",
+    });
+
+    const reasoningItems = (withSecond.itemsByThread[threadId] ?? []).filter(
+      (item): item is Extract<ConversationItem, { kind: "reasoning" }> =>
+        item.kind === "reasoning",
+    );
+    expect(reasoningItems).toHaveLength(2);
+    expect(reasoningItems[0]?.id).toBe("reasoning-seg");
+    expect(reasoningItems[0]?.content).toContain("先读取项目结构");
+    expect(reasoningItems[1]?.id).toBe("reasoning-seg-seg-1");
+    expect(reasoningItems[1]?.content).toContain("再检查关键配置");
+  });
+
   it("reconciles legacy text-delta id with later canonical assistant id", () => {
     const first = threadReducer(initialState, {
       type: "appendAgentDelta",

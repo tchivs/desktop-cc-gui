@@ -698,6 +698,12 @@ function dedupeAdjacentReasoningItems(
   return deduped;
 }
 
+const REASONING_SEGMENT_ID_REGEX = /(?:^|[:-])seg-\d+$/;
+
+function isExplicitReasoningSegmentId(id: string) {
+  return REASONING_SEGMENT_ID_REGEX.test(id);
+}
+
 function collapseConsecutiveReasoningRuns(
   list: ConversationItem[],
   enabled: boolean,
@@ -715,9 +721,18 @@ function collapseConsecutiveReasoningRuns(
       index += 1;
       continue;
     }
+    if (isExplicitReasoningSegmentId(item.id)) {
+      collapsed.push(item);
+      index += 1;
+      continue;
+    }
 
     let end = index + 1;
-    while (end < list.length && list[end].kind === "reasoning") {
+    while (
+      end < list.length &&
+      list[end].kind === "reasoning" &&
+      !isExplicitReasoningSegmentId(list[end].id)
+    ) {
       end += 1;
     }
 

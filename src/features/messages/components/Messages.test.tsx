@@ -2184,6 +2184,46 @@ describe("Messages", () => {
     expect(container.textContent ?? "").toContain("输出最终分析报告");
   });
 
+  it("keeps consecutive claude live reasoning runs segmented while streaming", () => {
+    const items: ConversationItem[] = [
+      {
+        id: "reasoning-live-run",
+        kind: "reasoning",
+        summary: "先读取 README 并识别技术栈",
+        content: "先读取 README 并识别技术栈",
+      },
+      {
+        id: "reasoning-live-run-seg-1",
+        kind: "reasoning",
+        summary: "继续读取 CLAUDE.md 并整理结论",
+        content: "继续读取 CLAUDE.md 并整理结论",
+      },
+      {
+        id: "reasoning-live-run-seg-2",
+        kind: "reasoning",
+        summary: "输出最终分析报告",
+        content: "输出最终分析报告",
+      },
+    ];
+
+    const { container } = render(
+      <Messages
+        items={items}
+        threadId="thread-1"
+        workspaceId="ws-1"
+        isThinking
+        activeEngine="claude"
+        openTargets={[]}
+        selectedOpenAppId=""
+      />,
+    );
+
+    expect(container.querySelectorAll(".thinking-block").length).toBe(3);
+    expect(container.textContent ?? "").toContain("先读取 README 并识别技术栈");
+    expect(container.textContent ?? "").toContain("继续读取 CLAUDE.md 并整理结论");
+    expect(container.textContent ?? "").toContain("输出最终分析报告");
+  });
+
   it("keeps first multiline claude reasoning content after collapsing runs", () => {
     const items: ConversationItem[] = [
       {

@@ -1393,6 +1393,18 @@ function resolveLiveAssistantMessageId(
   return segment > 0 ? `${itemId}-seg-${segment}` : itemId;
 }
 
+function resolveLiveReasoningItemId(
+  state: ThreadState,
+  threadId: string,
+  itemId: string,
+) {
+  if (!isLocalCliReasoningThread(threadId)) {
+    return itemId;
+  }
+  const segment = state.agentSegmentByThread[threadId] ?? 0;
+  return segment > 0 ? `${itemId}-seg-${segment}` : itemId;
+}
+
 function addSummaryBoundary(existing: string) {
   if (!existing) {
     return existing;
@@ -2234,6 +2246,14 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
       }
       let nextItem = ensureUniqueReviewId(list, item);
       if (nextItem.kind === "reasoning") {
+        const segmentedReasoningId = resolveLiveReasoningItemId(
+          state,
+          action.threadId,
+          nextItem.id,
+        );
+        if (segmentedReasoningId !== nextItem.id) {
+          nextItem = { ...nextItem, id: segmentedReasoningId };
+        }
         const existingReasoning = list.find(
           (entry): entry is Extract<ConversationItem, { kind: "reasoning" }> =>
             entry.id === nextItem.id && entry.kind === "reasoning",
@@ -2549,13 +2569,18 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
       if (!shouldAcceptReasoningDelta(state, action.threadId)) {
         return state;
       }
+      const segmentedReasoningId = resolveLiveReasoningItemId(
+        state,
+        action.threadId,
+        action.itemId,
+      );
       const list = state.itemsByThread[action.threadId] ?? [];
-      const index = findReasoningIndexById(list, action.itemId);
+      const index = findReasoningIndexById(list, segmentedReasoningId);
       const base =
         index >= 0
           ? (list[index] as ConversationItem)
           : {
-              id: action.itemId,
+              id: segmentedReasoningId,
               kind: "reasoning",
               summary: "",
               content: "",
@@ -2593,13 +2618,18 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
       if (!shouldAcceptReasoningDelta(state, action.threadId)) {
         return state;
       }
+      const segmentedReasoningId = resolveLiveReasoningItemId(
+        state,
+        action.threadId,
+        action.itemId,
+      );
       const list = state.itemsByThread[action.threadId] ?? [];
-      const index = findReasoningIndexById(list, action.itemId);
+      const index = findReasoningIndexById(list, segmentedReasoningId);
       const base =
         index >= 0
           ? (list[index] as ConversationItem)
           : {
-              id: action.itemId,
+              id: segmentedReasoningId,
               kind: "reasoning",
               summary: "",
               content: "",
@@ -2653,13 +2683,18 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
       if (!shouldAcceptReasoningDelta(state, action.threadId)) {
         return state;
       }
+      const segmentedReasoningId = resolveLiveReasoningItemId(
+        state,
+        action.threadId,
+        action.itemId,
+      );
       const list = state.itemsByThread[action.threadId] ?? [];
-      const index = findReasoningIndexById(list, action.itemId);
+      const index = findReasoningIndexById(list, segmentedReasoningId);
       const base =
         index >= 0
           ? (list[index] as ConversationItem)
           : {
-              id: action.itemId,
+              id: segmentedReasoningId,
               kind: "reasoning",
               summary: "",
               content: "",

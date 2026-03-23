@@ -143,8 +143,6 @@ impl ClaudeSession {
             return Err(failure_message);
         }
 
-        self.emit_compaction_signal(turn_id, "compact_boundary", None);
-
         let mut retry_params = params;
         retry_params.continue_session = true;
         if retry_params.session_id.is_none() {

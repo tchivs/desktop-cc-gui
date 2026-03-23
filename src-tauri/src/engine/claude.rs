@@ -489,12 +489,27 @@ impl ClaudeSession {
                         // dedicated handler which waits for user input, kills the
                         // current CLI, and restarts with --resume.
                         if is_user_input_request {
-                            if let Some(new_lines) = self
+                            match self
                                 .handle_ask_user_question_resume(turn_id, &params, &new_session_id)
                                 .await
                             {
-                                lines = new_lines;
-                                continue;
+                                Ok(Some(new_lines)) => {
+                                    lines = new_lines;
+                                    continue;
+                                }
+                                Ok(None) => {}
+                                Err(error) => {
+                                    self.emit_turn_event(
+                                        turn_id,
+                                        EngineEvent::TurnError {
+                                            workspace_id: self.workspace_id.clone(),
+                                            error: error.clone(),
+                                            code: None,
+                                        },
+                                    );
+                                    self.clear_turn_ephemeral_state(turn_id);
+                                    return Err(error);
+                                }
                             }
                         }
                     }

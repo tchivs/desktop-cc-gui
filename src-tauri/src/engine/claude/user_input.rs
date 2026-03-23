@@ -1,6 +1,30 @@
 use super::*;
 
 impl ClaudeSession {
+    async fn stop_child_after_resume_failure(
+        &self,
+        turn_id: &str,
+        mut child: Child,
+        message: String,
+    ) -> String {
+        log::error!("{}", message);
+        if let Err(error) = child.kill().await {
+            log::debug!(
+                "[claude] Failed to kill resume child after AskUserQuestion error (turn={}): {}",
+                turn_id,
+                error
+            );
+        }
+        if let Err(error) = child.wait().await {
+            log::debug!(
+                "[claude] Failed to wait resume child after AskUserQuestion error (turn={}): {}",
+                turn_id,
+                error
+            );
+        }
+        message
+    }
+
     fn get_or_create_user_input_notify(&self, turn_id: &str) -> Arc<Notify> {
         if let Ok(mut map) = self.user_input_notify_by_turn.lock() {
             if let Some(existing) = map.get(turn_id) {
@@ -149,14 +173,15 @@ impl ClaudeSession {
     /// current CLI process and restart it with `--resume` carrying the user's
     /// actual answer.
     ///
-    /// Returns the new stdout `Lines` reader if successfully resumed, or `None`
-    /// if we should continue reading from the current process.
+    /// Returns the new stdout `Lines` reader if successfully resumed.
+    /// `Ok(None)` means we should continue reading from the current process.
+    /// `Err` means resume failed after the original process was already terminated.
     pub(super) async fn handle_ask_user_question_resume(
         &self,
         turn_id: &str,
         params: &SendMessageParams,
         new_session_id: &Option<String>,
-    ) -> Option<tokio::io::Lines<BufReader<tokio::process::ChildStdout>>> {
+    ) -> Result<Option<tokio::io::Lines<BufReader<tokio::process::ChildStdout>>>, String> {
         let notify = self.get_or_create_user_input_notify(turn_id);
         log::info!("AskUserQuestion detected, waiting for user (up to 5 min)…");
         let user_answered = tokio::select! {
@@ -169,7 +194,7 @@ impl ClaudeSession {
         if !user_answered {
             log::info!("AskUserQuestion timed out (5 min), resuming original");
             self.clear_pending_user_inputs_for_turn(turn_id);
-            return None;
+            return Ok(None);
         }
 
         // Grab the formatted answer for this turn only.
@@ -181,7 +206,7 @@ impl ClaudeSession {
 
         let answer = match answer_text {
             Some(a) => a,
-            None => return None,
+            None => return Ok(None),
         };
 
         // We need a session_id for --resume
@@ -192,7 +217,7 @@ impl ClaudeSession {
                     "No session_id available for --resume, \
                      continuing with original output"
                 );
-                return None;
+                return Ok(None);
             }
         };
 
@@ -226,26 +251,71 @@ impl ClaudeSession {
                         let message = match build_message_content(&resume_params) {
                             Ok(value) => value,
                             Err(error) => {
-                                log::error!("Failed to build resume message content: {}", error);
-                                return None;
+                                let failure = self
+                                    .stop_child_after_resume_failure(
+                                        turn_id,
+                                        new_child,
+                                        format!(
+                                            "Failed to build AskUserQuestion resume message: {}",
+                                            error
+                                        ),
+                                    )
+                                    .await;
+                                return Err(failure);
                             }
                         };
                         let message_str = match serde_json::to_string(&message) {
                             Ok(value) => value,
                             Err(error) => {
-                                log::error!("Failed to serialize resume message: {}", error);
-                                return None;
+                                let failure = self
+                                    .stop_child_after_resume_failure(
+                                        turn_id,
+                                        new_child,
+                                        format!(
+                                            "Failed to serialize AskUserQuestion resume message: {}",
+                                            error
+                                        ),
+                                    )
+                                    .await;
+                                return Err(failure);
                             }
                         };
                         if let Err(error) = stdin.write_all(message_str.as_bytes()).await {
-                            log::error!("Failed to write resume message to stdin: {}", error);
-                            return None;
+                            let failure = self
+                                .stop_child_after_resume_failure(
+                                    turn_id,
+                                    new_child,
+                                    format!(
+                                        "Failed to write AskUserQuestion resume message to stdin: {}",
+                                        error
+                                    ),
+                                )
+                                .await;
+                            return Err(failure);
                         }
                         if let Err(error) = stdin.write_all(b"\n").await {
-                            log::error!("Failed to write resume newline to stdin: {}", error);
-                            return None;
+                            let failure = self
+                                .stop_child_after_resume_failure(
+                                    turn_id,
+                                    new_child,
+                                    format!(
+                                        "Failed to write AskUserQuestion resume newline to stdin: {}",
+                                        error
+                                    ),
+                                )
+                                .await;
+                            return Err(failure);
                         }
                         drop(stdin);
+                    } else {
+                        let failure = self
+                            .stop_child_after_resume_failure(
+                                turn_id,
+                                new_child,
+                                "Resume process missing stdin in stream-json mode".to_string(),
+                            )
+                            .await;
+                        return Err(failure);
                     }
                 } else {
                     // Drop stdin immediately for non-stream-json resume requests.
@@ -274,12 +344,10 @@ impl ClaudeSession {
                 }
 
                 log::info!("Resumed Claude with user's answer");
-                new_lines
+                Ok(new_lines)
             }
             Err(e) => {
-                log::error!("Failed to spawn resume process: {}", e);
-                // Fall through — continue with original
-                None
+                Err(format!("Failed to spawn AskUserQuestion resume process: {}", e))
             }
         }
     }

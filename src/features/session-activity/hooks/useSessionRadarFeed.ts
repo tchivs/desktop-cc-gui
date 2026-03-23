@@ -439,7 +439,24 @@ export function useSessionRadarFeed(input: UseSessionRadarFeedInput): SessionRad
   } = input;
   const resolvedRecentLimit = recentLimit ?? DEFAULT_RECENT_LIMIT;
   const [historyMutationVersion, setHistoryMutationVersion] = useState(0);
+  const [durationRefreshTick, setDurationRefreshTick] = useState(0);
   const cachedLiveThreadEntriesRef = useRef<Record<string, CachedLiveThreadEntry>>({});
+  const hasRunningThread = useMemo(
+    () => Object.values(threadStatusById).some((status) => Boolean(status?.isProcessing)),
+    [threadStatusById],
+  );
+
+  useEffect(() => {
+    if (!hasRunningThread) {
+      return;
+    }
+    const timerId = window.setInterval(() => {
+      setDurationRefreshTick((previous) => previous + 1);
+    }, 1000);
+    return () => {
+      window.clearInterval(timerId);
+    };
+  }, [hasRunningThread]);
 
   const liveFeed = useMemo(
     () => {
@@ -539,6 +556,7 @@ export function useSessionRadarFeed(input: UseSessionRadarFeedInput): SessionRad
       threadStatusById,
       threadsByWorkspace,
       workspaces,
+      durationRefreshTick,
     ],
   );
 

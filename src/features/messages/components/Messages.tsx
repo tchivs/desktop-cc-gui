@@ -2084,6 +2084,11 @@ export const Messages = memo(function Messages({
         if (!parsed?.workingLabel) {
           return false;
         }
+        // Gemini realtime segmented reasoning must stay visible as independent
+        // timeline slices instead of being reduced to only the latest title-only row.
+        if (activeEngine === "gemini" && isExplicitReasoningSegmentId(item.id)) {
+          return true;
+        }
         if (activeEngine === "claude") {
           return true;
         }

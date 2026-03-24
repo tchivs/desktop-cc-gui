@@ -18,6 +18,12 @@ use super::{EngineConfig, EngineType, SendMessageParams};
 
 const GEMINI_REASONING_HISTORY_SYNC_INTERVAL_MS: u64 = 900;
 
+#[derive(Debug, Default)]
+struct GeminiSnapshotToolState {
+    started_emitted: bool,
+    completed_signature: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct GeminiTurnEvent {
     pub turn_id: String,
@@ -588,6 +594,7 @@ impl GeminiSession {
         let mut last_reasoning_snapshot = String::new();
         let mut saw_reasoning_output = false;
         let mut emitted_reasoning_texts = BTreeSet::new();
+        let mut snapshot_tool_states: HashMap<String, GeminiSnapshotToolState> = HashMap::new();
         let mut last_reasoning_history_sync_at = std::time::Instant::now()
             - std::time::Duration::from_millis(GEMINI_REASONING_HISTORY_SYNC_INTERVAL_MS);
 
@@ -616,6 +623,17 @@ impl GeminiSession {
                                     engine: EngineType::Gemini,
                                 },
                             );
+                        }
+                    }
+                    let snapshot_tool_events = extract_tool_events_from_snapshot(
+                        &self.workspace_id,
+                        &event,
+                        &mut snapshot_tool_states,
+                    );
+                    if !snapshot_tool_events.is_empty() {
+                        saw_tool_activity = true;
+                        for tool_event in snapshot_tool_events {
+                            self.emit_turn_event(turn_id, tool_event);
                         }
                     }
                     let parsed_event = parse_gemini_event(&self.workspace_id, &event);
@@ -1237,6 +1255,222 @@ fn is_completion_event_type(event_type: &str) -> bool {
     )
 }
 
+fn find_tool_calls_array<'a>(value: &'a Value, depth: usize) -> Option<&'a Vec<Value>> {
+    if depth > 6 {
+        return None;
+    }
+
+    if let Some(calls) = value.get("toolCalls").and_then(Value::as_array) {
+        if !calls.is_empty() {
+            return Some(calls);
+        }
+    }
+    if let Some(calls) = value.get("tool_calls").and_then(Value::as_array) {
+        if !calls.is_empty() {
+            return Some(calls);
+        }
+    }
+
+    if let Some(array) = value.as_array() {
+        for item in array.iter().rev() {
+            if let Some(calls) = find_tool_calls_array(item, depth + 1) {
+                return Some(calls);
+            }
+        }
+        return None;
+    }
+
+    let Some(object) = value.as_object() else {
+        return None;
+    };
+
+    for key in [
+        "message", "messages", "item", "items", "content", "data", "payload", "result", "response",
+        "event", "turn",
+    ] {
+        if let Some(nested) = object.get(key) {
+            if let Some(calls) = find_tool_calls_array(nested, depth + 1) {
+                return Some(calls);
+            }
+        }
+    }
+
+    for nested in object.values() {
+        if let Some(calls) = find_tool_calls_array(nested, depth + 1) {
+            return Some(calls);
+        }
+    }
+
+    None
+}
+
+fn extract_tool_events_from_snapshot(
+    workspace_id: &str,
+    event: &Value,
+    tool_states: &mut HashMap<String, GeminiSnapshotToolState>,
+) -> Vec<EngineEvent> {
+    let Some(tool_calls) = find_tool_calls_array(event, 0) else {
+        return Vec::new();
+    };
+    let mut events: Vec<EngineEvent> = Vec::new();
+
+    for (index, call) in tool_calls.iter().enumerate() {
+        let Some(call_object) = call.as_object() else {
+            continue;
+        };
+
+        let tool_id = first_non_empty_str(&[
+            call_object.get("id").and_then(|value| value.as_str()),
+            call_object.get("toolId").and_then(|value| value.as_str()),
+            call_object
+                .get("tool_use_id")
+                .and_then(|value| value.as_str()),
+            call_object
+                .get("toolUseId")
+                .and_then(|value| value.as_str()),
+            call_object.get("callId").and_then(|value| value.as_str()),
+            call_object.get("call_id").and_then(|value| value.as_str()),
+        ])
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("gemini-tool-call-{}", index + 1));
+
+        let tool_name = first_non_empty_str(&[
+            call_object
+                .get("displayName")
+                .and_then(|value| value.as_str()),
+            call_object.get("name").and_then(|value| value.as_str()),
+            call_object.get("toolName").and_then(|value| value.as_str()),
+            call_object.get("tool").and_then(|value| value.as_str()),
+        ])
+        .unwrap_or("tool")
+        .to_string();
+
+        let input = call_object
+            .get("args")
+            .cloned()
+            .or_else(|| call_object.get("input").cloned())
+            .or_else(|| call_object.get("parameters").cloned())
+            .or_else(|| call_object.get("arguments").cloned());
+
+        let mut output = call_object
+            .get("result")
+            .cloned()
+            .filter(|value| !value.is_null())
+            .or_else(|| call_object.get("output").cloned())
+            .or_else(|| call_object.get("response").cloned());
+
+        let result_display = first_non_empty_str(&[
+            call_object
+                .get("resultDisplay")
+                .and_then(|value| value.as_str()),
+            call_object
+                .get("result_display")
+                .and_then(|value| value.as_str()),
+            call_object.get("display").and_then(|value| value.as_str()),
+        ])
+        .map(str::to_string);
+        if output.is_none() {
+            if let Some(display) = result_display.clone() {
+                output = Some(Value::String(display));
+            }
+        }
+
+        let status = first_non_empty_str(&[
+            call_object.get("status").and_then(|value| value.as_str()),
+            call_object.get("phase").and_then(|value| value.as_str()),
+            call_object.get("state").and_then(|value| value.as_str()),
+        ])
+        .map(|value| value.trim().to_ascii_lowercase());
+        let status_is_completed = status.as_deref().is_some_and(|value| {
+            matches!(
+                value,
+                "done"
+                    | "completed"
+                    | "complete"
+                    | "success"
+                    | "succeeded"
+                    | "failed"
+                    | "failure"
+                    | "error"
+                    | "cancelled"
+                    | "canceled"
+            )
+        });
+        let status_is_failed = status
+            .as_deref()
+            .is_some_and(|value| value.contains("fail") || value.contains("error"));
+        let explicit_completion = call_object.get("endedAt").is_some()
+            || call_object.get("completedAt").is_some()
+            || is_truthy(
+                call_object
+                    .get("completed")
+                    .or_else(|| call_object.get("isCompleted"))
+                    .or_else(|| call_object.get("done")),
+            );
+        let has_completion = output.is_some() || status_is_completed || explicit_completion;
+
+        let error_text = first_non_empty_str(&[
+            call_object.get("error").and_then(|value| value.as_str()),
+            call_object.get("message").and_then(|value| value.as_str()),
+        ])
+        .map(str::to_string)
+        .or_else(|| {
+            if status_is_failed {
+                Some("Tool execution failed".to_string())
+            } else {
+                None
+            }
+        });
+
+        let completion_output = match (input.clone(), output.clone()) {
+            (Some(input_value), Some(output_value)) => Some(json!({
+                "_input": input_value,
+                "_output": output_value,
+            })),
+            (None, Some(output_value)) => Some(output_value),
+            (Some(input_value), None) if error_text.is_some() => Some(json!({
+                "_input": input_value,
+            })),
+            _ => None,
+        };
+
+        let state = tool_states.entry(tool_id.clone()).or_default();
+        if !state.started_emitted {
+            events.push(EngineEvent::ToolStarted {
+                workspace_id: workspace_id.to_string(),
+                tool_id: tool_id.clone(),
+                tool_name: tool_name.clone(),
+                input: input.clone(),
+            });
+            state.started_emitted = true;
+        }
+
+        if !has_completion {
+            continue;
+        }
+
+        let completion_signature = serde_json::to_string(&json!({
+            "output": completion_output,
+            "error": error_text,
+            "status": status,
+        }))
+        .unwrap_or_default();
+        if state.completed_signature.as_deref() == Some(completion_signature.as_str()) {
+            continue;
+        }
+        state.completed_signature = Some(completion_signature);
+        events.push(EngineEvent::ToolCompleted {
+            workspace_id: workspace_id.to_string(),
+            tool_id,
+            tool_name: Some(tool_name),
+            output: completion_output,
+            error: error_text,
+        });
+    }
+
+    events
+}
+
 fn parse_gemini_event(workspace_id: &str, event: &Value) -> Option<EngineEvent> {
     let event_type = event.get("type").and_then(|v| v.as_str())?;
     match event_type {
@@ -1390,10 +1624,12 @@ fn parse_gemini_event(workspace_id: &str, event: &Value) -> Option<EngineEvent> 
 mod tests {
     use super::EngineEvent;
     use super::{
-        collect_latest_turn_reasoning_texts, extract_latest_thought_text, parse_gemini_event,
-        GeminiSession, GeminiSessionMessage,
+        collect_latest_turn_reasoning_texts, extract_latest_thought_text,
+        extract_tool_events_from_snapshot, parse_gemini_event, GeminiSession, GeminiSessionMessage,
+        GeminiSnapshotToolState,
     };
     use serde_json::json;
+    use std::collections::HashMap;
 
     #[test]
     fn selected_auth_type_for_api_key_modes() {
@@ -1632,6 +1868,98 @@ mod tests {
         });
         let parsed = parse_gemini_event("workspace-1", &payload);
         assert!(matches!(parsed, Some(EngineEvent::TurnCompleted { .. })));
+    }
+
+    #[test]
+    fn extract_tool_events_from_snapshot_emits_started_then_completed_once() {
+        let mut tool_states: HashMap<String, GeminiSnapshotToolState> = HashMap::new();
+        let started_payload = json!({
+            "type": "gemini",
+            "toolCalls": [
+                {
+                    "id": "tool-1",
+                    "displayName": "ReadFile",
+                    "args": {
+                        "path": "README.md"
+                    }
+                }
+            ]
+        });
+
+        let started_events =
+            extract_tool_events_from_snapshot("workspace-1", &started_payload, &mut tool_states);
+        assert_eq!(started_events.len(), 1);
+        match &started_events[0] {
+            EngineEvent::ToolStarted {
+                tool_id, tool_name, ..
+            } => {
+                assert_eq!(tool_id, "tool-1");
+                assert_eq!(tool_name, "ReadFile");
+            }
+            _ => panic!("expected ToolStarted"),
+        }
+
+        // Replayed snapshots should not duplicate tool started rows.
+        let replay_started =
+            extract_tool_events_from_snapshot("workspace-1", &started_payload, &mut tool_states);
+        assert!(replay_started.is_empty());
+
+        let completed_payload = json!({
+            "type": "gemini",
+            "toolCalls": [
+                {
+                    "id": "tool-1",
+                    "displayName": "ReadFile",
+                    "args": {
+                        "path": "README.md"
+                    },
+                    "resultDisplay": "ok",
+                    "result": {
+                        "status": "ok"
+                    }
+                }
+            ]
+        });
+        let completed_events =
+            extract_tool_events_from_snapshot("workspace-1", &completed_payload, &mut tool_states);
+        assert_eq!(completed_events.len(), 1);
+        match &completed_events[0] {
+            EngineEvent::ToolCompleted { tool_id, .. } => {
+                assert_eq!(tool_id, "tool-1");
+            }
+            _ => panic!("expected ToolCompleted"),
+        }
+
+        // Completed snapshot replay should also stay deduped.
+        let replay_completed =
+            extract_tool_events_from_snapshot("workspace-1", &completed_payload, &mut tool_states);
+        assert!(replay_completed.is_empty());
+    }
+
+    #[test]
+    fn extract_tool_events_from_snapshot_emits_started_for_completed_only_payload() {
+        let mut tool_states: HashMap<String, GeminiSnapshotToolState> = HashMap::new();
+        let payload = json!({
+            "type": "gemini",
+            "message": {
+                "toolCalls": [
+                    {
+                        "id": "tool-2",
+                        "displayName": "EditFile",
+                        "args": {
+                            "path": "src/App.tsx"
+                        },
+                        "status": "completed",
+                        "resultDisplay": "updated"
+                    }
+                ]
+            }
+        });
+
+        let events = extract_tool_events_from_snapshot("workspace-1", &payload, &mut tool_states);
+        assert_eq!(events.len(), 2);
+        assert!(matches!(events[0], EngineEvent::ToolStarted { .. }));
+        assert!(matches!(events[1], EngineEvent::ToolCompleted { .. }));
     }
 
     #[test]

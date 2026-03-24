@@ -2270,6 +2270,46 @@ describe("Messages", () => {
     expect(container.textContent ?? "").toContain("输出最终分析报告");
   });
 
+  it("keeps segmented gemini reasoning slices visible during realtime rendering", () => {
+    const items: ConversationItem[] = [
+      {
+        id: "gemini-reasoning-seg-1",
+        kind: "reasoning",
+        summary: "创建 operationlog 目录",
+        content: "创建 operationlog 目录",
+      },
+      {
+        id: "gemini-reasoning-seg-2",
+        kind: "reasoning",
+        summary: "编写 OperationLog.java",
+        content: "编写 OperationLog.java",
+      },
+      {
+        id: "gemini-reasoning-seg-3",
+        kind: "reasoning",
+        summary: "编写 OperationLogRequest.java",
+        content: "编写 OperationLogRequest.java",
+      },
+    ];
+
+    const { container } = render(
+      <Messages
+        items={items}
+        threadId="gemini:thread-1"
+        workspaceId="ws-1"
+        isThinking
+        activeEngine="gemini"
+        openTargets={[]}
+        selectedOpenAppId=""
+      />,
+    );
+
+    expect(container.querySelectorAll(".thinking-block").length).toBe(3);
+    expect(container.textContent ?? "").toContain("创建 operationlog 目录");
+    expect(container.textContent ?? "").toContain("编写 OperationLog.java");
+    expect(container.textContent ?? "").toContain("编写 OperationLogRequest.java");
+  });
+
   it("keeps consecutive claude live reasoning runs segmented while streaming", () => {
     const items: ConversationItem[] = [
       {

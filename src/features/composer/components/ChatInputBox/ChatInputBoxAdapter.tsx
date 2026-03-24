@@ -283,7 +283,31 @@ function fileUriToHostPath(value: string): string | null {
   }
 }
 
-function attachmentToImageInput(attachment: Attachment): string | null {
+function attachmentToClaudeImageInput(attachment: Attachment): string | null {
+  if (!attachment.mediaType.startsWith('image/')) {
+    return null;
+  }
+  const payload = attachment.data.trim();
+  if (!payload) {
+    return null;
+  }
+  if (payload.startsWith('data:')) {
+    return payload;
+  }
+  if (payload.toLowerCase().startsWith('file://')) {
+    return payload;
+  }
+  if (
+    payload.startsWith('http://') ||
+    payload.startsWith('https://') ||
+    isHostAbsolutePath(payload)
+  ) {
+    return payload;
+  }
+  return `data:${attachment.mediaType};base64,${payload}`;
+}
+
+function attachmentToGeminiImageInput(attachment: Attachment): string | null {
   if (!attachment.mediaType.startsWith('image/')) {
     return null;
   }
@@ -314,12 +338,18 @@ function attachmentToImageInput(attachment: Attachment): string | null {
   return `data:${attachment.mediaType};base64,${payload}`;
 }
 
-function attachmentsToImageInputs(attachments?: Attachment[]): string[] | undefined {
+function attachmentsToImageInputs(
+  attachments: Attachment[] | undefined,
+  provider: 'claude' | 'codex' | 'gemini' | 'opencode' = 'claude',
+): string[] | undefined {
   if (!attachments || attachments.length === 0) {
     return undefined;
   }
+  const mapper = provider === 'gemini'
+    ? attachmentToGeminiImageInput
+    : attachmentToClaudeImageInput;
   const mapped = attachments
-    .map(attachmentToImageInput)
+    .map(mapper)
     .filter((entry): entry is string => Boolean(entry));
   if (mapped.length === 0) {
     return undefined;
@@ -608,8 +638,9 @@ export const ChatInputBoxAdapter = forwardRef<ChatInputBoxHandle, ChatInputBoxAd
 
     // Handle submit from ChatInputBox
     const handleSubmit = useCallback((submittedText: string, submittedAttachments?: Attachment[]) => {
-      onSend(submittedText, attachmentsToImageInputs(submittedAttachments));
-    }, [onSend]);
+      const provider = engineToProvider(selectedEngine);
+      onSend(submittedText, attachmentsToImageInputs(submittedAttachments, provider));
+    }, [onSend, selectedEngine]);
 
     // Handle attachment removal (convert Attachment id back to path)
     const handleRemoveAttachment = useCallback((id: string) => {

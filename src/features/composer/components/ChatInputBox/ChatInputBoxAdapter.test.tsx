@@ -296,7 +296,7 @@ describe('ChatInputBoxAdapter toggle bridge', () => {
     );
   });
 
-  it("normalizes file URI attachments into host paths before sending", async () => {
+  it("keeps file URI attachments unchanged for claude sends", async () => {
     const onSend = vi.fn();
     renderAdapter({ onSend });
 
@@ -325,10 +325,42 @@ describe('ChatInputBoxAdapter toggle bridge', () => {
       ]);
     });
 
+    expect(onSend).toHaveBeenCalledWith("fresh child snapshot", ["file:///tmp/a%20b.png"]);
+  });
+
+  it("normalizes file URI attachments into host paths for gemini sends", async () => {
+    const onSend = vi.fn();
+    renderAdapter({ onSend, selectedEngine: "gemini" });
+
+    await waitFor(() => expect(mockState.latestProps).toBeTruthy());
+
+    const latest = mockState.latestProps as {
+      onSubmit?: (
+        content: string,
+        attachments?: Array<{
+          id: string;
+          fileName: string;
+          mediaType: string;
+          data: string;
+        }>,
+      ) => void;
+    };
+
+    act(() => {
+      latest.onSubmit?.("fresh child snapshot", [
+        {
+          id: "att-2b",
+          fileName: "image.png",
+          mediaType: "image/png",
+          data: "file:///tmp/a%20b.png",
+        },
+      ]);
+    });
+
     expect(onSend).toHaveBeenCalledWith("fresh child snapshot", ["/tmp/a b.png"]);
   });
 
-  it("recovers miswrapped data URL payload containing file URI", async () => {
+  it("keeps miswrapped data URL payload containing file URI for claude sends", async () => {
     const onSend = vi.fn();
     renderAdapter({ onSend });
 
@@ -357,10 +389,12 @@ describe('ChatInputBoxAdapter toggle bridge', () => {
       ]);
     });
 
-    expect(onSend).toHaveBeenCalledWith("fresh child snapshot", ["/tmp/c d.png"]);
+    expect(onSend).toHaveBeenCalledWith("fresh child snapshot", [
+      "data:image/png;base64,file:///tmp/c%20d.png",
+    ]);
   });
 
-  it("normalizes localhost file URI attachments into absolute host paths", async () => {
+  it("keeps localhost file URI attachments unchanged for claude sends", async () => {
     const onSend = vi.fn();
     renderAdapter({ onSend });
 
@@ -389,10 +423,10 @@ describe('ChatInputBoxAdapter toggle bridge', () => {
       ]);
     });
 
-    expect(onSend).toHaveBeenCalledWith("fresh child snapshot", ["/tmp/e f.png"]);
+    expect(onSend).toHaveBeenCalledWith("fresh child snapshot", ["file://localhost/tmp/e%20f.png"]);
   });
 
-  it("preserves UNC-like file URI host attachments", async () => {
+  it("keeps UNC-like file URI host attachments unchanged for claude sends", async () => {
     const onSend = vi.fn();
     renderAdapter({ onSend });
 
@@ -421,7 +455,9 @@ describe('ChatInputBoxAdapter toggle bridge', () => {
       ]);
     });
 
-    expect(onSend).toHaveBeenCalledWith("fresh child snapshot", ["//server/share/folder/a b.png"]);
+    expect(onSend).toHaveBeenCalledWith("fresh child snapshot", [
+      "file://server/share/folder/a%20b.png",
+    ]);
   });
 
   it('forwards dual context usage model and flag to ChatInputBox', async () => {

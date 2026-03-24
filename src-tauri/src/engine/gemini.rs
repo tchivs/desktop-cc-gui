@@ -13,6 +13,7 @@ use tokio::process::{Child, Command};
 use tokio::sync::{broadcast, Mutex, RwLock};
 
 use super::events::EngineEvent;
+use super::gemini_history::{load_gemini_session, GeminiSessionMessage};
 use super::{EngineConfig, EngineType, SendMessageParams};
 
 #[derive(Debug, Clone)]
@@ -104,6 +105,69 @@ impl GeminiSession {
         format!(
             "[External OpenSpec Root]\n- Path: {spec_root}\n- Treat this as the active spec root when checking or reading project specs.\n[/External OpenSpec Root]\n\n{text}"
         )
+    }
+
+    fn normalize_image_path_for_prompt(raw: &str) -> Option<String> {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        if trimmed.starts_with("data:") {
+            log::warn!(
+                "Gemini image attachment is data-url based; Gemini CLI needs file paths, skipping"
+            );
+            return None;
+        }
+        if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+            log::warn!(
+                "Gemini image attachment is remote-url based; Gemini CLI needs local file paths, skipping: {}",
+                trimmed
+            );
+            return None;
+        }
+        if let Some(path) = trimmed.strip_prefix("file://") {
+            let path_without_host = path.strip_prefix("localhost/").unwrap_or(path);
+            if cfg!(windows)
+                && path_without_host.starts_with('/')
+                && path_without_host
+                    .as_bytes()
+                    .get(2)
+                    .is_some_and(|value| *value == b':')
+            {
+                return Some(path_without_host[1..].to_string());
+            }
+            return Some(path_without_host.to_string());
+        }
+        Some(trimmed.to_string())
+    }
+
+    fn escape_image_reference(path: &str) -> String {
+        let escaped = path.replace('\\', "\\\\").replace('"', "\\\"");
+        format!("@\"{}\"", escaped)
+    }
+
+    fn with_image_references(text: &str, images: Option<&[String]>) -> String {
+        let Some(images) = images else {
+            return text.to_string();
+        };
+        let mut image_references: Vec<String> = Vec::new();
+        for raw in images {
+            if let Some(path) = Self::normalize_image_path_for_prompt(raw) {
+                let reference = Self::escape_image_reference(&path);
+                if !image_references.iter().any(|existing| existing == &reference) {
+                    image_references.push(reference);
+                }
+            }
+        }
+        if image_references.is_empty() {
+            return text.to_string();
+        }
+        let mut merged = text.trim_end().to_string();
+        if !merged.is_empty() {
+            merged.push_str("\n\n");
+        }
+        merged.push_str(&image_references.join(" "));
+        merged
     }
 
     fn normalize_auth_mode(raw_mode: Option<&str>) -> Option<&'static str> {
@@ -356,6 +420,7 @@ impl GeminiSession {
 
         let message_text =
             Self::with_external_spec_hint(&params.text, params.custom_spec_root.as_deref());
+        let message_text = Self::with_image_references(&message_text, params.images.as_deref());
         let safe_text = if message_text.starts_with('-') {
             format!(" {}", message_text)
         } else {
@@ -457,6 +522,7 @@ impl GeminiSession {
         let mut new_session_id: Option<String> = None;
         let mut observed_event_types = BTreeSet::new();
         let mut last_reasoning_snapshot = String::new();
+        let mut saw_reasoning_output = false;
 
         let reader = BufReader::new(stdout);
         let mut lines = reader.lines();
@@ -493,6 +559,7 @@ impl GeminiSession {
                         if let Some(thought_text) = extract_latest_thought_text(&event) {
                             if thought_text != last_reasoning_snapshot {
                                 last_reasoning_snapshot = thought_text.clone();
+                                saw_reasoning_output = true;
                                 self.emit_turn_event(
                                     turn_id,
                                     EngineEvent::ReasoningDelta {
@@ -507,6 +574,10 @@ impl GeminiSession {
                         match &unified_event {
                             EngineEvent::TextDelta { text, .. } => {
                                 response_text.push_str(text);
+                            }
+                            EngineEvent::ReasoningDelta { text, .. } => {
+                                saw_reasoning_output = true;
+                                last_reasoning_snapshot = text.clone();
                             }
                             EngineEvent::ToolStarted { .. } | EngineEvent::ToolCompleted { .. } => {
                                 saw_tool_activity = true;
@@ -533,6 +604,38 @@ impl GeminiSession {
                 Err(_) => {
                     error_output.push_str(&line);
                     error_output.push('\n');
+                }
+            }
+        }
+
+        if !saw_reasoning_output {
+            let fallback_session_id = if new_session_id.is_some() {
+                new_session_id.clone()
+            } else {
+                self.get_session_id().await
+            };
+            if let Some(session_id) = fallback_session_id {
+                if let Ok(history) = load_gemini_session(
+                    &self.workspace_path,
+                    &session_id,
+                    self.home_dir.as_deref(),
+                )
+                .await
+                {
+                    let fallback_reasoning = collect_latest_turn_reasoning_texts(&history.messages);
+                    for text in fallback_reasoning {
+                        if text == last_reasoning_snapshot {
+                            continue;
+                        }
+                        last_reasoning_snapshot = text.clone();
+                        self.emit_turn_event(
+                            turn_id,
+                            EngineEvent::ReasoningDelta {
+                                workspace_id: self.workspace_id.clone(),
+                                text,
+                            },
+                        );
+                    }
                 }
             }
         }
@@ -726,26 +829,87 @@ fn extract_result_error_message(event: &Value) -> Option<String> {
         .map(|value| value.to_string())
 }
 
-fn extract_latest_thought_text(event: &Value) -> Option<String> {
-    let thoughts = event.get("thoughts")?.as_array()?;
-    thoughts.iter().rev().find_map(|thought| {
-        let subject = thought
-            .get("subject")
-            .and_then(|value| value.as_str())
-            .map(str::trim)
-            .filter(|value| !value.is_empty());
-        let description = thought
-            .get("description")
-            .and_then(|value| value.as_str())
-            .map(str::trim)
-            .filter(|value| !value.is_empty());
-        match (subject, description) {
-            (Some(sub), Some(desc)) => Some(format!("{}: {}", sub, desc)),
-            (Some(sub), None) => Some(sub.to_string()),
-            (None, Some(desc)) => Some(desc.to_string()),
-            (None, None) => None,
+fn extract_thought_entry_text(thought: &Value) -> Option<String> {
+    let subject = first_non_empty_str(&[
+        thought.get("subject").and_then(|value| value.as_str()),
+        thought.get("title").and_then(|value| value.as_str()),
+    ]);
+    let description = first_non_empty_str(&[
+        thought.get("description").and_then(|value| value.as_str()),
+        thought.get("detail").and_then(|value| value.as_str()),
+        thought.get("text").and_then(|value| value.as_str()),
+        thought.get("message").and_then(|value| value.as_str()),
+    ]);
+    match (subject, description) {
+        (Some(sub), Some(desc)) => Some(format!("{}: {}", sub, desc)),
+        (Some(sub), None) => Some(sub.to_string()),
+        (None, Some(desc)) => Some(desc.to_string()),
+        (None, None) => None,
+    }
+}
+
+fn extract_latest_thought_text_from_value(value: &Value, depth: usize) -> Option<String> {
+    if depth > 6 {
+        return None;
+    }
+    if let Some(thoughts) = value.get("thoughts").and_then(|candidate| candidate.as_array()) {
+        if let Some(latest) = thoughts.iter().rev().find_map(extract_thought_entry_text) {
+            return Some(latest);
         }
-    })
+    }
+
+    if let Some(text) = value
+        .get("thought")
+        .and_then(extract_thought_entry_text)
+        .or_else(|| value.get("currentThought").and_then(extract_thought_entry_text))
+        .or_else(|| value.get("latestThought").and_then(extract_thought_entry_text))
+    {
+        return Some(text);
+    }
+
+    if let Some(array) = value.as_array() {
+        for item in array.iter().rev() {
+            if let Some(latest) = extract_latest_thought_text_from_value(item, depth + 1) {
+                return Some(latest);
+            }
+        }
+        return None;
+    }
+
+    let Some(object) = value.as_object() else {
+        return None;
+    };
+
+    for key in [
+        "message", "messages", "item", "items", "content", "data", "payload", "result",
+        "response", "event", "turn",
+    ] {
+        if let Some(nested) = object.get(key) {
+            if let Some(latest) = extract_latest_thought_text_from_value(nested, depth + 1) {
+                return Some(latest);
+            }
+        }
+    }
+
+    for nested in object.values() {
+        if let Some(latest) = extract_latest_thought_text_from_value(nested, depth + 1) {
+            return Some(latest);
+        }
+    }
+    None
+}
+
+fn extract_latest_thought_text(event: &Value) -> Option<String> {
+    extract_latest_thought_text_from_value(event, 0)
+}
+
+fn extract_reasoning_event_text(event: &Value) -> Option<String> {
+    extract_event_text(event)
+        .or_else(|| extract_thought_entry_text(event))
+        .or_else(|| event.get("thought").and_then(extract_thought_entry_text))
+        .or_else(|| event.get("currentThought").and_then(extract_thought_entry_text))
+        .or_else(|| event.get("latestThought").and_then(extract_thought_entry_text))
+        .or_else(|| extract_latest_thought_text(event))
 }
 
 fn parse_completion_event(workspace_id: &str, event: &Value) -> Option<EngineEvent> {
@@ -791,6 +955,25 @@ fn parse_completion_event(workspace_id: &str, event: &Value) -> Option<EngineEve
         workspace_id: workspace_id.to_string(),
         result: result_payload,
     })
+}
+
+fn collect_latest_turn_reasoning_texts(messages: &[GeminiSessionMessage]) -> Vec<String> {
+    let mut collected_reversed: Vec<String> = Vec::new();
+    for message in messages.iter().rev() {
+        if message.role.eq_ignore_ascii_case("user") {
+            break;
+        }
+        if !message.kind.eq_ignore_ascii_case("reasoning") {
+            continue;
+        }
+        let trimmed = message.text.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        collected_reversed.push(trimmed.to_string());
+    }
+    collected_reversed.reverse();
+    collected_reversed
 }
 
 fn extract_event_text(event: &Value) -> Option<String> {
@@ -918,7 +1101,7 @@ fn parse_gemini_event(workspace_id: &str, event: &Value) -> Option<EngineEvent> 
             })
         }
         "reasoning" | "reasoning_delta" | "thinking" | "thinking_delta" | "thought" | "thought_delta" => {
-            let text = extract_event_text(event)?;
+            let text = extract_reasoning_event_text(event)?;
             Some(EngineEvent::ReasoningDelta {
                 workspace_id: workspace_id.to_string(),
                 text,
@@ -933,13 +1116,14 @@ fn parse_gemini_event(workspace_id: &str, event: &Value) -> Option<EngineEvent> 
             if role == "user" || role == "system" {
                 return None;
             }
-            let text = extract_event_text(event)?;
             if should_treat_message_as_reasoning(event, &role) {
+                let text = extract_reasoning_event_text(event)?;
                 return Some(EngineEvent::ReasoningDelta {
                     workspace_id: workspace_id.to_string(),
                     text,
                 });
             }
+            let text = extract_event_text(event)?;
             Some(EngineEvent::TextDelta {
                 workspace_id: workspace_id.to_string(),
                 text,
@@ -1030,7 +1214,7 @@ fn parse_gemini_event(workspace_id: &str, event: &Value) -> Option<EngineEvent> 
                 return parse_completion_event(workspace_id, event);
             }
             if is_reasoning_event_type(event_type) {
-                let text = extract_event_text(event)?;
+                let text = extract_reasoning_event_text(event)?;
                 return Some(EngineEvent::ReasoningDelta {
                     workspace_id: workspace_id.to_string(),
                     text,
@@ -1050,7 +1234,10 @@ fn parse_gemini_event(workspace_id: &str, event: &Value) -> Option<EngineEvent> 
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_latest_thought_text, parse_gemini_event, GeminiSession};
+    use super::{
+        collect_latest_turn_reasoning_texts, extract_latest_thought_text, parse_gemini_event,
+        GeminiSession, GeminiSessionMessage,
+    };
     use serde_json::json;
     use super::EngineEvent;
 
@@ -1095,6 +1282,34 @@ mod tests {
     }
 
     #[test]
+    fn with_image_references_appends_deduped_at_paths() {
+        let images = vec![
+            "/tmp/screen 1.png".to_string(),
+            "/tmp/screen 1.png".to_string(),
+            "/tmp/screen-2.jpg".to_string(),
+        ];
+        let prompt = GeminiSession::with_image_references("Describe screenshots", Some(images.as_slice()));
+        assert_eq!(
+            prompt,
+            "Describe screenshots\n\n@\"/tmp/screen 1.png\" @\"/tmp/screen-2.jpg\""
+        );
+    }
+
+    #[test]
+    fn with_image_references_strips_file_uri_prefix() {
+        let images = vec!["file:///Users/demo/a.png".to_string()];
+        let prompt = GeminiSession::with_image_references("Describe", Some(images.as_slice()));
+        assert_eq!(prompt, "Describe\n\n@\"/Users/demo/a.png\"");
+    }
+
+    #[test]
+    fn with_image_references_skips_unsupported_data_urls() {
+        let images = vec!["data:image/png;base64,AAAA".to_string()];
+        let prompt = GeminiSession::with_image_references("Describe", Some(images.as_slice()));
+        assert_eq!(prompt, "Describe");
+    }
+
+    #[test]
     fn parse_result_error_maps_to_turn_error() {
         let payload = json!({
             "type": "result",
@@ -1133,6 +1348,62 @@ mod tests {
         match parsed {
             Some(EngineEvent::ReasoningDelta { text, .. }) => {
                 assert_eq!(text, "先规划，再执行");
+            }
+            _ => panic!("expected ReasoningDelta"),
+        }
+    }
+
+    #[test]
+    fn parse_thought_event_with_subject_description_maps_to_reasoning_delta() {
+        let payload = json!({
+            "type": "thought",
+            "subject": "读取项目结构",
+            "description": "先检查 README 和 pom.xml"
+        });
+        let parsed = parse_gemini_event("workspace-1", &payload);
+        match parsed {
+            Some(EngineEvent::ReasoningDelta { text, .. }) => {
+                assert_eq!(text, "读取项目结构: 先检查 README 和 pom.xml");
+            }
+            _ => panic!("expected ReasoningDelta"),
+        }
+    }
+
+    #[test]
+    fn parse_reasoning_keyword_event_with_nested_thought_maps_to_reasoning_delta() {
+        let payload = json!({
+            "type": "assistant_thinking_update",
+            "thought": {
+                "subject": "规划步骤",
+                "description": "先看配置再看源码"
+            }
+        });
+        let parsed = parse_gemini_event("workspace-1", &payload);
+        match parsed {
+            Some(EngineEvent::ReasoningDelta { text, .. }) => {
+                assert_eq!(text, "规划步骤: 先看配置再看源码");
+            }
+            _ => panic!("expected ReasoningDelta"),
+        }
+    }
+
+    #[test]
+    fn parse_reasoning_keyword_event_with_nested_message_thoughts_maps_to_reasoning_delta() {
+        let payload = json!({
+            "type": "assistant_thinking_update",
+            "message": {
+                "thoughts": [
+                    {
+                        "subject": "读取项目结构",
+                        "description": "先看 README 和 package.json"
+                    }
+                ]
+            }
+        });
+        let parsed = parse_gemini_event("workspace-1", &payload);
+        match parsed {
+            Some(EngineEvent::ReasoningDelta { text, .. }) => {
+                assert_eq!(text, "读取项目结构: 先看 README 和 package.json");
             }
             _ => panic!("expected ReasoningDelta"),
         }
@@ -1199,6 +1470,32 @@ mod tests {
     }
 
     #[test]
+    fn extract_latest_thought_text_reads_nested_message_payload() {
+        let payload = json!({
+            "type": "message",
+            "message": {
+                "messages": [
+                    {
+                        "type": "assistant",
+                        "thoughts": [
+                            {
+                                "subject": "先收集上下文",
+                                "description": "读取 docs 和 src 目录"
+                            },
+                            {
+                                "subject": "再生成结论",
+                                "description": "整理关键变更点"
+                            }
+                        ]
+                    }
+                ]
+            }
+        });
+        let extracted = extract_latest_thought_text(&payload);
+        assert_eq!(extracted.as_deref(), Some("再生成结论: 整理关键变更点"));
+    }
+
+    #[test]
     fn approval_mode_current_uses_cli_default() {
         assert_eq!(GeminiSession::resolve_approval_mode(Some("current")), None);
     }
@@ -1209,5 +1506,73 @@ mod tests {
             GeminiSession::resolve_approval_mode(Some("full-access")),
             Some("yolo")
         );
+    }
+
+    #[test]
+    fn collect_latest_turn_reasoning_texts_stops_at_latest_user_boundary() {
+        let messages = vec![
+            GeminiSessionMessage {
+                id: "old-r1".to_string(),
+                role: "assistant".to_string(),
+                text: "旧思考".to_string(),
+                images: None,
+                timestamp: None,
+                kind: "reasoning".to_string(),
+                tool_type: None,
+                title: None,
+                tool_input: None,
+                tool_output: None,
+            },
+            GeminiSessionMessage {
+                id: "old-a1".to_string(),
+                role: "assistant".to_string(),
+                text: "旧正文".to_string(),
+                images: None,
+                timestamp: None,
+                kind: "message".to_string(),
+                tool_type: None,
+                title: None,
+                tool_input: None,
+                tool_output: None,
+            },
+            GeminiSessionMessage {
+                id: "u-last".to_string(),
+                role: "user".to_string(),
+                text: "新的提问".to_string(),
+                images: None,
+                timestamp: None,
+                kind: "message".to_string(),
+                tool_type: None,
+                title: None,
+                tool_input: None,
+                tool_output: None,
+            },
+            GeminiSessionMessage {
+                id: "r-last-1".to_string(),
+                role: "assistant".to_string(),
+                text: "先看目录".to_string(),
+                images: None,
+                timestamp: None,
+                kind: "reasoning".to_string(),
+                tool_type: None,
+                title: None,
+                tool_input: None,
+                tool_output: None,
+            },
+            GeminiSessionMessage {
+                id: "r-last-2".to_string(),
+                role: "assistant".to_string(),
+                text: "再读 README".to_string(),
+                images: None,
+                timestamp: None,
+                kind: "reasoning".to_string(),
+                tool_type: None,
+                title: None,
+                tool_input: None,
+                tool_output: None,
+            },
+        ];
+        let collected = collect_latest_turn_reasoning_texts(&messages);
+        assert_eq!(collected, vec!["先看目录".to_string(), "再读 README".to_string()]);
     }
 }

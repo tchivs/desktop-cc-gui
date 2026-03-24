@@ -225,6 +225,23 @@ function appendReasoningItem(
   });
 }
 
+function extractImageList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const images: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    const normalized = asString(entry).trim();
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    images.push(normalized);
+  }
+  return images;
+}
+
 export function parseGeminiHistoryMessages(messagesData: unknown): ConversationItem[] {
   if (!Array.isArray(messagesData)) {
     return [];
@@ -248,7 +265,8 @@ export function parseGeminiHistoryMessages(messagesData: unknown): ConversationI
         ? "user"
         : "assistant";
       const text = asString(message.text ?? "");
-      if (!text.trim()) {
+      const images = extractImageList(message.images);
+      if (!text.trim() && images.length === 0) {
         continue;
       }
       items.push({
@@ -256,6 +274,7 @@ export function parseGeminiHistoryMessages(messagesData: unknown): ConversationI
         kind: "message",
         role,
         text,
+        images: images.length > 0 ? images : undefined,
       });
       continue;
     }

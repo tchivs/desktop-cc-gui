@@ -99,6 +99,7 @@ describe("history loaders", () => {
             kind: "message",
             role: "user",
             text: "hello",
+            images: ["/tmp/demo.png"],
           },
           {
             id: "gemini-assistant-1",
@@ -118,12 +119,35 @@ describe("history loaders", () => {
       expect.objectContaining({
         kind: "message",
         role: "user",
+        images: ["/tmp/demo.png"],
       }),
     );
     expect(snapshot.items[1]).toEqual(
       expect.objectContaining({
         kind: "message",
         role: "assistant",
+      }),
+    );
+  });
+
+  it("keeps gemini user image-only history rows", () => {
+    const items = parseGeminiHistoryMessages([
+      {
+        id: "gemini-user-image-only",
+        kind: "message",
+        role: "user",
+        text: "",
+        images: ["/tmp/image-only.png"],
+      },
+    ]);
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toEqual(
+      expect.objectContaining({
+        id: "gemini-user-image-only",
+        kind: "message",
+        role: "user",
+        images: ["/tmp/image-only.png"],
       }),
     );
   });
@@ -944,7 +968,13 @@ describe("history loaders", () => {
       workspacePath: "/tmp/ws-2",
       loadClaudeSession: vi.fn().mockResolvedValue({
         messages: [
-          { kind: "message", id: "user-1", role: "user", text: "run test" },
+          {
+            kind: "message",
+            id: "user-1",
+            role: "user",
+            text: "run test",
+            images: ["/tmp/claude-shot.png"],
+          },
           {
             kind: "tool",
             id: "tool-1",
@@ -966,6 +996,13 @@ describe("history loaders", () => {
     const snapshot = await loader.load("claude:session-1");
     expect(snapshot.engine).toBe("claude");
     expect(snapshot.items).toHaveLength(2);
+    expect(snapshot.items[0]).toEqual(
+      expect.objectContaining({
+        kind: "message",
+        role: "user",
+        images: ["/tmp/claude-shot.png"],
+      }),
+    );
     const tool = snapshot.items[1];
     expect(tool?.kind).toBe("tool");
     if (tool?.kind === "tool") {

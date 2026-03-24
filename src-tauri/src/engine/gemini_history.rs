@@ -1,9 +1,10 @@
 //! Read Gemini CLI session history from ~/.gemini/{tmp,history}/**/chats/session-*.json
 
 use chrono::DateTime;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
@@ -25,6 +26,8 @@ pub struct GeminiSessionMessage {
     pub id: String,
     pub role: String,
     pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub images: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<String>,
     /// "message", "reasoning", or "tool"
@@ -311,12 +314,218 @@ fn extract_message_text(message: &Value) -> Option<String> {
         .or_else(|| message.get("message").and_then(extract_text_from_value))
 }
 
+fn extract_display_text(message: &Value) -> Option<String> {
+    message
+        .get("displayContent")
+        .and_then(extract_text_from_value)
+        .or_else(|| message.get("display_content").and_then(extract_text_from_value))
+}
+
+fn is_image_path_candidate(path: &str) -> bool {
+    let normalized = path
+        .split('?')
+        .next()
+        .unwrap_or(path)
+        .split('#')
+        .next()
+        .unwrap_or(path)
+        .trim()
+        .to_ascii_lowercase();
+    [
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".avif", ".heic", ".heif",
+    ]
+    .iter()
+    .any(|suffix| normalized.ends_with(suffix))
+}
+
+#[derive(Debug, Clone)]
+struct AtImageReference {
+    start: usize,
+    end: usize,
+    path: String,
+}
+
+fn unescape_quoted_at_path(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut escaping = false;
+    for ch in value.chars() {
+        if escaping {
+            output.push(ch);
+            escaping = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaping = true;
+            continue;
+        }
+        output.push(ch);
+    }
+    if escaping {
+        output.push('\\');
+    }
+    output
+}
+
+fn extract_image_at_references(text: &str) -> Vec<AtImageReference> {
+    let pattern = Regex::new(r#"@"((?:\\.|[^"\\])+?)"|@([^\s]+)"#)
+        .expect("at-reference regex should be valid");
+    let mut references = Vec::new();
+    for capture in pattern.captures_iter(text) {
+        let Some(matched) = capture.get(0) else {
+            continue;
+        };
+        let path = if let Some(quoted) = capture.get(1) {
+            unescape_quoted_at_path(quoted.as_str())
+        } else if let Some(unquoted) = capture.get(2) {
+            unquoted.as_str().to_string()
+        } else {
+            continue;
+        };
+        if !is_image_path_candidate(&path) {
+            continue;
+        }
+        references.push(AtImageReference {
+            start: matched.start(),
+            end: matched.end(),
+            path,
+        });
+    }
+    references
+}
+
+fn strip_image_at_references(text: &str) -> String {
+    let references = extract_image_at_references(text);
+    if references.is_empty() {
+        return text.trim().to_string();
+    }
+    let mut output = String::with_capacity(text.len());
+    let mut cursor = 0usize;
+    for reference in references {
+        if reference.start > cursor {
+            output.push_str(&text[cursor..reference.start]);
+        }
+        cursor = reference.end;
+    }
+    if cursor < text.len() {
+        output.push_str(&text[cursor..]);
+    }
+    output
+        .split('\n')
+        .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
+}
+
+fn collect_content_image_sources(value: &Value, output: &mut Vec<String>) {
+    if let Some(array) = value.as_array() {
+        for item in array {
+            collect_content_image_sources(item, output);
+        }
+        return;
+    }
+    let Some(object) = value.as_object() else {
+        return;
+    };
+
+    if let Some(inline_data) = object
+        .get("inlineData")
+        .or_else(|| object.get("inline_data"))
+        .and_then(|node| node.as_object())
+    {
+        let data = inline_data
+            .get("data")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let mime_type = inline_data
+            .get("mimeType")
+            .or_else(|| inline_data.get("mime_type"))
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        if let Some(data) = data {
+            let mime = mime_type.unwrap_or("image/png");
+            if mime.to_ascii_lowercase().starts_with("image/")
+                && data.len() <= 3_000_000
+            {
+                output.push(format!("data:{};base64,{}", mime, data));
+            }
+        }
+    }
+
+    if let Some(file_data) = object
+        .get("fileData")
+        .or_else(|| object.get("file_data"))
+        .and_then(|node| node.as_object())
+    {
+        let file_uri = file_data
+            .get("fileUri")
+            .or_else(|| file_data.get("file_uri"))
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        if let Some(file_uri) = file_uri {
+            let mime_type = file_data
+                .get("mimeType")
+                .or_else(|| file_data.get("mime_type"))
+                .or_else(|| file_data.get("mimeData"))
+                .or_else(|| file_data.get("mime_data"))
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            if mime_type
+                .map(|value| value.to_ascii_lowercase().starts_with("image/"))
+                .unwrap_or_else(|| is_image_path_candidate(file_uri))
+            {
+                output.push(file_uri.to_string());
+            }
+        }
+    }
+
+    for nested in object.values() {
+        collect_content_image_sources(nested, output);
+    }
+}
+
+fn dedupe_string_list(values: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut deduped = Vec::new();
+    for value in values {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if seen.insert(trimmed.to_string()) {
+            deduped.push(trimmed.to_string());
+        }
+    }
+    deduped
+}
+
+fn extract_message_images(message: &Value) -> Vec<String> {
+    let mut images = Vec::new();
+    if let Some(display_text) = extract_display_text(message) {
+        for reference in extract_image_at_references(&display_text) {
+            images.push(reference.path);
+        }
+    }
+    if !images.is_empty() {
+        return dedupe_string_list(images);
+    }
+    if let Some(content) = message.get("content") {
+        collect_content_image_sources(content, &mut images);
+    }
+    dedupe_string_list(images)
+}
+
 fn count_inline_images(value: &Value) -> usize {
     if let Some(array) = value.as_array() {
         return array.iter().map(count_inline_images).sum();
     }
     if let Some(object) = value.as_object() {
-        if object
+        let inline_count = if object
             .get("inlineData")
             .or_else(|| object.get("inline_data"))
             .and_then(|node| node.get("data"))
@@ -324,9 +533,23 @@ fn count_inline_images(value: &Value) -> usize {
             .map(|value| !value.trim().is_empty())
             .unwrap_or(false)
         {
-            return 1;
-        }
-        return object.values().map(count_inline_images).sum();
+            1
+        } else {
+            0
+        };
+        let file_count = if object
+            .get("fileData")
+            .or_else(|| object.get("file_data"))
+            .and_then(|node| node.get("fileUri").or_else(|| node.get("file_uri")))
+            .and_then(|value| value.as_str())
+            .map(is_image_path_candidate)
+            .unwrap_or(false)
+        {
+            1
+        } else {
+            0
+        };
+        return inline_count + file_count + object.values().map(count_inline_images).sum::<usize>();
     }
     0
 }
@@ -399,7 +622,7 @@ fn parse_summary_from_value(path: &Path, value: &Value) -> Option<GeminiSessionS
     let first_message = messages
         .iter()
         .filter(|message| message.get("type").and_then(|v| v.as_str()) == Some("user"))
-        .find_map(extract_message_text)
+        .find_map(|message| extract_display_text(message).or_else(|| extract_message_text(message)))
         .map(|text| truncate_chars(&text, 60))
         .unwrap_or_else(|| {
             path.file_stem()
@@ -462,9 +685,15 @@ fn parse_messages_from_value(value: &Value) -> GeminiSessionLoadResult {
 
         match msg_type.as_str() {
             "user" => {
-                let mut text = extract_message_text(&raw).unwrap_or_default();
+                let images = extract_message_images(&raw);
+                let mut text = extract_display_text(&raw)
+                    .or_else(|| extract_message_text(&raw))
+                    .unwrap_or_default();
+                if !images.is_empty() {
+                    text = strip_image_at_references(&text);
+                }
                 let image_count = raw.get("content").map(count_inline_images).unwrap_or(0);
-                if image_count > 0 {
+                if images.is_empty() && image_count > 0 {
                     let image_marker = if image_count == 1 {
                         "[image]".to_string()
                     } else {
@@ -476,13 +705,14 @@ fn parse_messages_from_value(value: &Value) -> GeminiSessionLoadResult {
                         text = format!("{}\n{}", text, image_marker);
                     }
                 }
-                if text.trim().is_empty() {
+                if text.trim().is_empty() && images.is_empty() {
                     continue;
                 }
                 messages.push(GeminiSessionMessage {
                     id: base_id,
                     role: "user".to_string(),
                     text,
+                    images: if images.is_empty() { None } else { Some(images) },
                     timestamp,
                     kind: "message".to_string(),
                     tool_type: None,
@@ -543,6 +773,7 @@ fn parse_messages_from_value(value: &Value) -> GeminiSessionLoadResult {
                             id: format!("{}-reasoning-{}", base_id, counter),
                             role: "assistant".to_string(),
                             text,
+                            images: None,
                             timestamp: None,
                             kind: "reasoning".to_string(),
                             tool_type: None,
@@ -587,6 +818,7 @@ fn parse_messages_from_value(value: &Value) -> GeminiSessionLoadResult {
                             id: tool_use_id.clone(),
                             role: "assistant".to_string(),
                             text: input_text,
+                            images: None,
                             timestamp: None,
                             kind: "tool".to_string(),
                             tool_type: Some(tool_name.clone()),
@@ -619,6 +851,7 @@ fn parse_messages_from_value(value: &Value) -> GeminiSessionLoadResult {
                                 id: format!("{}-result", tool_use_id),
                                 role: "assistant".to_string(),
                                 text: output,
+                                images: None,
                                 timestamp: None,
                                 kind: "tool".to_string(),
                                 tool_type: Some(if is_error {
@@ -647,6 +880,7 @@ fn parse_messages_from_value(value: &Value) -> GeminiSessionLoadResult {
                             id: base_id.clone(),
                             role: "assistant".to_string(),
                             text,
+                            images: None,
                             timestamp: None,
                             kind: "message".to_string(),
                             tool_type: None,
@@ -902,5 +1136,75 @@ mod tests {
         assert_eq!(entries[2].id, "tool-1-result");
         assert_eq!(entries[3].kind, "message");
         assert_eq!(entries[3].text, "最终答复");
+    }
+
+    #[test]
+    fn parse_messages_extracts_user_image_path_from_display_content() {
+        let value = json!({
+            "messages": [
+                {
+                    "type": "user",
+                    "id": "user-1",
+                    "content": [
+                        {
+                            "text": "@\"/tmp/a b.png\" 描述一下"
+                        },
+                        {
+                            "inlineData": {
+                                "data": "AAAA",
+                                "mimeType": "image/png"
+                            }
+                        }
+                    ],
+                    "displayContent": [
+                        {
+                            "text": "@\"/tmp/a b.png\" 描述一下"
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let parsed = parse_messages_from_value(&value);
+        let entries = parsed.messages;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].kind, "message");
+        assert_eq!(entries[0].role, "user");
+        assert_eq!(entries[0].text, "描述一下");
+        assert_eq!(entries[0].images, Some(vec!["/tmp/a b.png".to_string()]));
+    }
+
+    #[test]
+    fn parse_messages_extracts_user_inline_data_image_when_path_missing() {
+        let value = json!({
+            "messages": [
+                {
+                    "type": "user",
+                    "id": "user-1",
+                    "content": [
+                        {
+                            "text": "请描述图片"
+                        },
+                        {
+                            "inlineData": {
+                                "data": "AAAA",
+                                "mimeType": "image/png"
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let parsed = parse_messages_from_value(&value);
+        let entries = parsed.messages;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].kind, "message");
+        assert_eq!(entries[0].role, "user");
+        assert_eq!(entries[0].text, "请描述图片");
+        assert_eq!(
+            entries[0].images,
+            Some(vec!["data:image/png;base64,AAAA".to_string()])
+        );
     }
 }

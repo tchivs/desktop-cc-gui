@@ -130,6 +130,72 @@ fn extract_text_from_content(content: &Value) -> Option<String> {
     }
 }
 
+fn is_supported_image_media_type(media_type: Option<&str>) -> bool {
+    media_type
+        .map(|value| value.trim().to_ascii_lowercase())
+        .map(|value| value.starts_with("image/"))
+        .unwrap_or(false)
+}
+
+fn extract_images_from_content(content: &Value) -> Vec<String> {
+    let mut images = Vec::new();
+    let mut seen = HashSet::new();
+    let Some(blocks) = content.as_array() else {
+        return images;
+    };
+    for block in blocks {
+        let Some(block_type) = block.get("type").and_then(|value| value.as_str()) else {
+            continue;
+        };
+        if block_type != "image" {
+            continue;
+        }
+        let Some(source) = block.get("source").and_then(|value| value.as_object()) else {
+            continue;
+        };
+        let source_type = source
+            .get("type")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
+        let image_value = match source_type.as_str() {
+            "url" => source
+                .get("url")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| value.to_string()),
+            "base64" => {
+                let media_type = source.get("media_type").and_then(|value| value.as_str());
+                let data = source
+                    .get("data")
+                    .and_then(|value| value.as_str())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                if is_supported_image_media_type(media_type) {
+                    data.map(|payload| {
+                        format!(
+                            "data:{};base64,{}",
+                            media_type.unwrap_or("image/png"),
+                            payload
+                        )
+                    })
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        if let Some(value) = image_value {
+            if seen.insert(value.clone()) {
+                images.push(value);
+            }
+        }
+    }
+    images
+}
+
 /// Check if a user message should be filtered out (meta/warmup/command messages)
 fn is_filtered_message(text: &str) -> bool {
     text.starts_with("<command-name>")
@@ -322,6 +388,8 @@ pub struct ClaudeSessionMessage {
     pub role: String,
     pub text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub images: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<String>,
     /// "message", "reasoning", or "tool"
     pub kind: String,
@@ -486,6 +554,7 @@ pub async fn load_claude_session(
                     id,
                     role: role.to_string(),
                     text: text.to_string(),
+                    images: None,
                     timestamp,
                     kind: "message".to_string(),
                     tool_type: None,
@@ -497,6 +566,7 @@ pub async fn load_claude_session(
             Some(Value::Array(blocks)) => {
                 // Process content blocks: text, thinking, tool_use, tool_result
                 let mut text_parts: Vec<String> = Vec::new();
+                let image_sources = extract_images_from_content(&Value::Array(blocks.clone()));
 
                 for block in blocks {
                     let block_type = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
@@ -529,6 +599,7 @@ pub async fn load_claude_session(
                                     id,
                                     role: role.to_string(),
                                     text: thinking_text.to_string(),
+                                    images: None,
                                     timestamp: timestamp.clone(),
                                     kind: "reasoning".to_string(),
                                     tool_type: None,
@@ -564,6 +635,7 @@ pub async fn load_claude_session(
                                 id,
                                 role: role.to_string(),
                                 text: input,
+                                images: None,
                                 timestamp: timestamp.clone(),
                                 kind: "tool".to_string(),
                                 tool_type: Some(tool_name.to_string()),
@@ -630,6 +702,7 @@ pub async fn load_claude_session(
                                     id,
                                     role: "assistant".to_string(),
                                     text: result_content,
+                                    images: None,
                                     timestamp: timestamp.clone(),
                                     kind: "tool".to_string(),
                                     tool_type: Some(if is_error {
@@ -655,7 +728,7 @@ pub async fn load_claude_session(
                 }
 
                 // Add accumulated text parts as a message
-                if !text_parts.is_empty() {
+                if !text_parts.is_empty() || !image_sources.is_empty() {
                     counter += 1;
                     let id = if uuid.is_empty() {
                         format!("claude-msg-{}", counter)
@@ -666,6 +739,11 @@ pub async fn load_claude_session(
                         id,
                         role: role.to_string(),
                         text: text_parts.join("\n\n"),
+                        images: if image_sources.is_empty() {
+                            None
+                        } else {
+                            Some(image_sources)
+                        },
                         timestamp,
                         kind: "message".to_string(),
                         tool_type: None,
@@ -786,5 +864,62 @@ pub async fn delete_claude_session(workspace_path: &Path, session_id: &str) -> R
         Ok(())
     } else {
         Err(format!("Session file not found: {}", session_id))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_images_from_content;
+    use serde_json::json;
+
+    #[test]
+    fn extract_images_from_content_supports_base64_and_url() {
+        let content = json!([
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": "AAAA"
+                }
+            },
+            {
+                "type": "image",
+                "source": {
+                    "type": "url",
+                    "url": "https://example.com/a.png"
+                }
+            }
+        ]);
+        let images = extract_images_from_content(&content);
+        assert_eq!(
+            images,
+            vec![
+                "data:image/png;base64,AAAA".to_string(),
+                "https://example.com/a.png".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn extract_images_from_content_dedupes_repeated_entries() {
+        let content = json!([
+            {
+                "type": "image",
+                "source": {
+                    "type": "url",
+                    "url": "https://example.com/a.png"
+                }
+            },
+            {
+                "type": "image",
+                "source": {
+                    "type": "url",
+                    "url": "https://example.com/a.png"
+                }
+            }
+        ]);
+        let images = extract_images_from_content(&content);
+        assert_eq!(images, vec!["https://example.com/a.png".to_string()]);
     }
 }

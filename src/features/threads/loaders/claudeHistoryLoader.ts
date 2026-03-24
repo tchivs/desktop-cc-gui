@@ -113,6 +113,23 @@ function getClaudeToolOutputText(message: Record<string, unknown>) {
   );
 }
 
+function extractImageList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const images: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    const normalized = asString(entry).trim();
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    images.push(normalized);
+  }
+  return images;
+}
+
 function parseToolRecordCandidate(value: unknown): Record<string, unknown> | null {
   const direct = asRecord(value);
   if (direct) {
@@ -611,6 +628,7 @@ export function parseClaudeHistoryMessages(messagesData: unknown): ConversationI
     if (kind === "message") {
       const role = asString(message.role) === "user" ? "user" : "assistant";
       const text = asString(message.text ?? "");
+      const images = extractImageList(message.images);
       if (role === "user") {
         const pendingAskToolId = peekPendingAskTool();
         if (pendingAskToolId) {
@@ -629,6 +647,7 @@ export function parseClaudeHistoryMessages(messagesData: unknown): ConversationI
         kind: "message",
         role,
         text,
+        images: images.length > 0 ? images : undefined,
       });
       continue;
     }

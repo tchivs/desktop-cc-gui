@@ -147,6 +147,26 @@ describe("parseClaudeHistoryMessages", () => {
     }
   });
 
+  it("keeps user image attachments for message rows even when text is empty", () => {
+    const items = parseClaudeHistoryMessages([
+      {
+        kind: "message",
+        role: "user",
+        id: "msg-user-image-1",
+        text: "",
+        images: ["data:image/png;base64,AAAA"],
+      },
+    ]);
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      id: "msg-user-image-1",
+      kind: "message",
+      role: "user",
+      images: ["data:image/png;base64,AAAA"],
+    });
+  });
+
   it("parses legacy single-question AskUserQuestion payloads and answer text variants", () => {
     const items = parseClaudeHistoryMessages([
       {

@@ -2007,9 +2007,9 @@ pub async fn engine_send_message(
                 .get_claude_session(&workspace_id, &workspace_path)
                 .await;
 
-            let has_images = images.as_ref().is_some_and(|entries| {
-                entries.iter().any(|entry| !entry.trim().is_empty())
-            });
+            let has_images = images
+                .as_ref()
+                .is_some_and(|entries| entries.iter().any(|entry| !entry.trim().is_empty()));
             let continue_session_for_send = continue_session && !has_images;
 
             // Resolve session id according to mode:
@@ -2587,9 +2587,9 @@ pub async fn engine_send_message_sync(
                 .get_claude_session(&workspace_id, &workspace_path)
                 .await;
 
-            let has_images = images.as_ref().is_some_and(|entries| {
-                entries.iter().any(|entry| !entry.trim().is_empty())
-            });
+            let has_images = images
+                .as_ref()
+                .is_some_and(|entries| entries.iter().any(|entry| !entry.trim().is_empty()));
             let continue_session_for_send = continue_session && !has_images;
 
             let resolved_session_id = if has_images {

@@ -66,6 +66,7 @@ import type {
   WorkspaceInfo,
 } from "../../../types";
 import { formatDownloadSize } from "../../../utils/formatting";
+import wxqImage from "../../../assets/wxq.png";
 import {
   buildShortcutValue,
   getDefaultInterruptShortcut,
@@ -2573,7 +2574,7 @@ export function SettingsView({
                   <div className="settings-about-wechat-label">{t("about.wechatGroupTitle")}</div>
                   <img
                     className="settings-about-wechat-qr"
-                    src="https://claudecodecn-1253302184.cos.ap-beijing.myqcloud.com/vscode/wxq.png"
+                    src={wxqImage}
                     alt={t("about.wechatGroupTitle")}
                   />
                 </div>

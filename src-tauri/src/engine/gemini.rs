@@ -141,8 +141,9 @@ impl GeminiSession {
             return None;
         }
         if trimmed.starts_with("file://") {
-            return Self::normalize_file_uri_path(trimmed)
-                .and_then(|path| Self::normalize_local_image_path_for_workspace(path, workspace_path));
+            return Self::normalize_file_uri_path(trimmed).and_then(|path| {
+                Self::normalize_local_image_path_for_workspace(path, workspace_path)
+            });
         }
         Self::normalize_local_image_path_for_workspace(trimmed.to_string(), workspace_path)
     }
@@ -233,7 +234,9 @@ impl GeminiSession {
         if !candidate.is_absolute() || Self::is_path_within_workspace(&candidate, workspace_path) {
             return Some(trimmed.to_string());
         }
-        if let Some(materialized) = Self::materialize_external_image_path(&candidate, workspace_path) {
+        if let Some(materialized) =
+            Self::materialize_external_image_path(&candidate, workspace_path)
+        {
             return Some(materialized);
         }
         log::warn!(
@@ -334,9 +337,7 @@ impl GeminiSession {
 
     fn materialize_data_url_image(raw_data_url: &str, workspace_path: &Path) -> Option<String> {
         let Some((header, payload)) = raw_data_url.split_once(',') else {
-            log::warn!(
-                "Gemini image attachment data-url is malformed (missing comma), skipping"
-            );
+            log::warn!("Gemini image attachment data-url is malformed (missing comma), skipping");
             return None;
         };
         let Some(meta) = header.strip_prefix("data:") else {
@@ -356,9 +357,7 @@ impl GeminiSession {
             return None;
         }
         if !meta_parts.any(|entry| entry.eq_ignore_ascii_case("base64")) {
-            log::warn!(
-                "Gemini image attachment data-url is not base64 encoded, skipping"
-            );
+            log::warn!("Gemini image attachment data-url is not base64 encoded, skipping");
             return None;
         }
 
@@ -1854,13 +1853,13 @@ fn parse_gemini_event(workspace_id: &str, event: &Value) -> Option<EngineEvent> 
 
 #[cfg(test)]
 mod tests {
-    use base64::{engine::general_purpose::STANDARD, Engine as _};
     use super::EngineEvent;
     use super::{
         collect_latest_turn_reasoning_texts, extract_latest_thought_text,
         extract_tool_events_from_snapshot, parse_gemini_event, GeminiSession, GeminiSessionMessage,
         GeminiSnapshotToolState,
     };
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
     use serde_json::json;
     use std::collections::HashMap;
     use std::path::{Path, PathBuf};
@@ -2028,8 +2027,11 @@ mod tests {
         let images = vec![format!("data:image/png;base64,{}", encoded)];
         let workspace_path = unique_temp_path("moss-x-gemini-workspace");
         std::fs::create_dir_all(&workspace_path).expect("create workspace");
-        let prompt =
-            with_image_refs_for_test_in_workspace("Describe", images.as_slice(), workspace_path.as_path());
+        let prompt = with_image_refs_for_test_in_workspace(
+            "Describe",
+            images.as_slice(),
+            workspace_path.as_path(),
+        );
         assert!(prompt.starts_with("Describe\n\n@"));
 
         let normalized_path = extract_first_image_path(&prompt);
@@ -2054,8 +2056,11 @@ mod tests {
         std::fs::write(&source_path, [0x89, b'P', b'N', b'G']).expect("write source image");
 
         let images = vec![source_path.to_string_lossy().to_string()];
-        let prompt =
-            with_image_refs_for_test_in_workspace("Describe", images.as_slice(), workspace_path.as_path());
+        let prompt = with_image_refs_for_test_in_workspace(
+            "Describe",
+            images.as_slice(),
+            workspace_path.as_path(),
+        );
         let normalized_path = extract_first_image_path(&prompt);
         let copied_path = PathBuf::from(normalized_path);
 

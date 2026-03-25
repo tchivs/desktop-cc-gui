@@ -381,9 +381,7 @@ fn has_windows_drive_prefix(value: &str) -> bool {
 
 fn has_windows_drive_host(value: &str) -> bool {
     let bytes = value.as_bytes();
-    bytes.len() >= 2
-        && bytes[0].is_ascii_alphabetic()
-        && (bytes[1] == b':' || bytes[1] == b'|')
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && (bytes[1] == b':' || bytes[1] == b'|')
 }
 
 fn normalize_file_uri_path(file_uri: &str) -> Option<String> {

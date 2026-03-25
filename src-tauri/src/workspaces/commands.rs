@@ -784,11 +784,7 @@ async fn add_workspace_for_cli_engine(
         return Err(format!("CLI_NOT_FOUND:{}", engine_name));
     }
 
-    let name = PathBuf::from(&path)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("Workspace")
-        .to_string();
+    let name = workspaces_core::workspace_name_from_path(&path);
 
     let settings = WorkspaceSettings {
         engine_type: Some(engine_name.to_string()),

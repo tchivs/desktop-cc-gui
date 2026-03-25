@@ -2037,7 +2037,7 @@ const zhPart1 = {
     reportIssue: "报告问题",
     website: "官网",
     github: "GitHub",
-    wechatGroupTitle: "扫码加入微信群",
+    wechatGroupTitle: "扫描作者个人公众号二维码，获取微信交流群二维码，加群获得最新资讯和技术支持",
   },
 
   // 菜单

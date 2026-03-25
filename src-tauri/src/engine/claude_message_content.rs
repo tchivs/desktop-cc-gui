@@ -61,9 +61,8 @@ pub(super) fn build_message_content(params: &SendMessageParams) -> Result<Value,
                         continue;
                     }
                     if STANDARD.decode(normalized_base64.as_bytes()).is_err() {
-                        image_failures.push(
-                            "invalid data-url base64 payload (decode failed)".to_string(),
-                        );
+                        image_failures
+                            .push("invalid data-url base64 payload (decode failed)".to_string());
                         continue;
                     }
                     content.push(json!({
@@ -292,7 +291,9 @@ mod tests {
     fn build_message_content_returns_error_when_data_url_base64_invalid() {
         let mut params = SendMessageParams::default();
         params.text = "describe".to_string();
-        params.images = Some(vec!["data:image/png;base64,not-valid-base64-***".to_string()]);
+        params.images = Some(vec![
+            "data:image/png;base64,not-valid-base64-***".to_string()
+        ]);
 
         let error = build_message_content(&params).expect_err("expected error");
         assert!(error.contains("Failed to attach image inputs for Claude"));

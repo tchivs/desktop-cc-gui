@@ -117,6 +117,50 @@ describe("Composer context source grouping", () => {
     cleanup();
   });
 
+  it("avoids duplicated slash skill tokens when same skill name exists in multiple sources", async () => {
+    const onSend = vi.fn();
+    const view = render(
+      <ComposerHarness
+        onSend={onSend}
+        skills={[
+          {
+            name: "doc-backup",
+            path: "/repo/.claude/skills/doc-backup/SKILL.md",
+            source: "global_claude",
+            description: "claude",
+          },
+          {
+            name: "doc-backup",
+            path: "/repo/.codex/skills/doc-backup/SKILL.md",
+            source: "global_codex",
+            description: "codex",
+          },
+          {
+            name: "doc-backup",
+            path: "/repo/.agents/skills/doc-backup/SKILL.md",
+            source: "global_agents",
+            description: "agents",
+          },
+        ]}
+      />,
+    );
+
+    const textarea = getTextarea(view.container);
+    const value = "/doc-backup 帮我整理";
+    await act(async () => {
+      fireEvent.change(textarea, {
+        target: {
+          value,
+          selectionStart: value.length,
+        },
+      });
+      fireEvent.keyDown(textarea, { key: "Enter", bubbles: true });
+    });
+
+    const sentText = onSend.mock.calls[0]?.[0];
+    expect(sentText).toBe("/doc-backup 帮我整理");
+  });
+
   it("keeps slash token assembly clean without leaking source metadata", async () => {
     const onSend = vi.fn();
     const view = render(

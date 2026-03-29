@@ -215,6 +215,38 @@ const MANUAL_MEMORY_ASSISTANT_SUMMARY_REGEX =
   /(?:^|\n)\s*助手输出摘要[:：]\s*([\s\S]*?)(?=\n+\s*(?:助手输出|用户输入)[:：]|$)/;
 const INLINE_FILE_REFERENCE_TOKEN_REGEX = /(📁|📄)\s+([^\n`📁📄]+?)\s+`([^`\n]+)`/gu;
 
+function resolveSelectedNamedItems<T extends { name: string }>(
+  selectedNames: string[],
+  items: T[],
+): T[] {
+  if (selectedNames.length === 0 || items.length === 0) {
+    return [];
+  }
+  const firstByName = new Map<string, T>();
+  for (const item of items) {
+    const normalizedName = item.name.trim();
+    if (!normalizedName || firstByName.has(normalizedName)) {
+      continue;
+    }
+    firstByName.set(normalizedName, item);
+  }
+  const resolved: T[] = [];
+  const seen = new Set<string>();
+  for (const selectedName of selectedNames) {
+    const normalizedName = selectedName.trim();
+    if (!normalizedName || seen.has(normalizedName)) {
+      continue;
+    }
+    const resolvedItem = firstByName.get(normalizedName);
+    if (!resolvedItem) {
+      continue;
+    }
+    seen.add(normalizedName);
+    resolved.push(resolvedItem);
+  }
+  return resolved;
+}
+
 function clampUsagePercent(percent: number): number {
   if (!Number.isFinite(percent)) {
     return 0;
@@ -584,9 +616,13 @@ export const Composer = memo(function Composer({
       dismissedActiveFileReference !== activeFileReferenceSignature,
   );
 
-  const selectedSkills = skills.filter((skill) => selectedSkillNames.includes(skill.name));
-  const selectedCommons = commands.filter((item) =>
-    selectedCommonsNames.includes(item.name),
+  const selectedSkills = useMemo(
+    () => resolveSelectedNamedItems(selectedSkillNames, skills),
+    [selectedSkillNames, skills],
+  );
+  const selectedCommons = useMemo(
+    () => resolveSelectedNamedItems(selectedCommonsNames, commands),
+    [commands, selectedCommonsNames],
   );
   const selectedOpenCodeDirectCommand = useMemo(() => {
     if (selectedEngine !== "opencode") {

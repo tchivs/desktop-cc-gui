@@ -68,8 +68,8 @@
 /* Labeled tool button (icon + text) */
 .context-tool-btn--labeled {
   width: auto;
-  gap: 4px;
-  padding: 2px 6px;
+  gap: 2px;
+  padding: 2px 3px;
   border-radius: 999px;
 }
 
@@ -89,23 +89,24 @@
 .context-tools-right {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 0;
   margin-left: auto;
 }
 
 .context-live-canvas-controls {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  margin-right: 4px;
-  padding-right: 4px;
-  border-right: 1px solid color-mix(in srgb, var(--input-border) 74%, transparent);
+  gap: 0;
+  margin-right: 0;
+  padding-right: 0;
+  border-right: none;
 }
 
 .context-live-canvas-btn {
   color: var(--text-primary);
-  border-color: color-mix(in srgb, var(--input-border) 78%, transparent);
-  background: color-mix(in srgb, var(--dropdown-bg) 98%, #ffffff 2%);
+  border: none;
+  background: transparent;
+  box-shadow: none;
   min-height: 24px;
   gap: 5px;
 }
@@ -129,15 +130,13 @@
 }
 
 .context-live-canvas-btn:hover {
-  border-color: color-mix(in srgb, var(--text-primary) 36%, var(--input-border));
-  background: color-mix(in srgb, var(--dropdown-bg) 94%, #ffffff 6%);
+  background: transparent;
 }
 
 .context-live-canvas-btn.is-active {
-  border-color: color-mix(in srgb, #166534 72%, var(--input-border));
-  background: color-mix(in srgb, #166534 16%, var(--dropdown-bg));
+  background: transparent;
   color: #166534;
-  box-shadow: 0 0 0 1px color-mix(in srgb, #166534 34%, transparent);
+  box-shadow: none;
 }
 
 .context-live-canvas-btn.is-active svg {
@@ -162,17 +161,9 @@
 
 :root[data-theme="dark"] .context-live-canvas-btn.is-active,
 :root[data-theme="dim"] .context-live-canvas-btn.is-active {
-  border-color: color-mix(in srgb, #2f7f67 64%, var(--input-border));
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, #1f4f3f 30%, var(--dropdown-bg)),
-      color-mix(in srgb, #163c31 24%, var(--dropdown-bg))
-    );
+  background: transparent;
   color: #cfe8de;
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, #2f7f67 34%, transparent),
-    inset 0 1px 0 color-mix(in srgb, #b8e3d0 10%, transparent);
+  box-shadow: none;
 }
 
 :root[data-theme="dark"] .context-live-canvas-btn.is-active svg,
@@ -192,17 +183,9 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) .context-live-canvas-btn.is-active {
-    border-color: color-mix(in srgb, #2f7f67 64%, var(--input-border));
-    background:
-      linear-gradient(
-        180deg,
-        color-mix(in srgb, #1f4f3f 30%, var(--dropdown-bg)),
-        color-mix(in srgb, #163c31 24%, var(--dropdown-bg))
-      );
+    background: transparent;
     color: #cfe8de;
-    box-shadow:
-      0 0 0 1px color-mix(in srgb, #2f7f67 34%, transparent),
-      inset 0 1px 0 color-mix(in srgb, #b8e3d0 10%, transparent);
+    box-shadow: none;
   }
 
   :root:not([data-theme]) .context-live-canvas-btn.is-active svg,
@@ -230,6 +213,17 @@
 @media (prefers-reduced-motion: reduce) {
   .context-live-canvas-btn--focus-follow.is-active svg {
     animation: none;
+  }
+}
+
+/* Keep compact desktop spacing while preserving touch hit area on coarse pointers */
+@media (pointer: coarse) {
+  .context-tool-btn--labeled {
+    padding: 6px 4px;
+  }
+
+  .context-live-canvas-btn {
+    min-height: 30px;
   }
 }
 

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { act, render, waitFor } from '@testing-library/react';
+import { act, cleanup, render, waitFor } from '@testing-library/react';
 import type { ComponentProps } from 'react';
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockState = vi.hoisted(() => ({
   latestProps: null as Record<string, unknown> | null,
@@ -66,6 +66,10 @@ function renderAdapter(
 }
 
 describe('ChatInputBoxAdapter toggle bridge', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
   beforeEach(() => {
     mockState.latestProps = null;
     mockState.getClaudeProviders.mockReset().mockResolvedValue([
@@ -181,10 +185,10 @@ describe('ChatInputBoxAdapter toggle bridge', () => {
     renderAdapter();
 
     await waitFor(() => expect(mockState.latestProps).toBeTruthy());
-    const latest = mockState.latestProps as {
+    const getLatest = () => mockState.latestProps as {
       alwaysThinkingEnabled?: boolean;
     };
-    await waitFor(() => expect(latest.alwaysThinkingEnabled).toBe(true));
+    await waitFor(() => expect(getLatest().alwaysThinkingEnabled).toBe(true));
     expect(mockState.getClaudeAlwaysThinkingEnabled).toHaveBeenCalledTimes(1);
   });
 

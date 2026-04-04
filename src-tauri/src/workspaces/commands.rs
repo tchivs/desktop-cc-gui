@@ -461,6 +461,7 @@ pub(crate) async fn list_external_spec_tree(
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<WorkspaceFilesResponse, String> {
+    const MAX_EXTERNAL_SPEC_TREE_FILES: usize = 8_000;
     if remote_backend::is_remote_mode(&*state).await {
         let response = remote_backend::call_remote(
             &*state,
@@ -479,7 +480,7 @@ pub(crate) async fn list_external_spec_tree(
         }
     }
 
-    list_external_spec_tree_inner(&spec_root, usize::MAX)
+    list_external_spec_tree_inner(&spec_root, MAX_EXTERNAL_SPEC_TREE_FILES)
 }
 
 #[tauri::command]
@@ -1552,16 +1553,8 @@ pub(crate) async fn connect_workspace(
             .ok_or_else(|| "workspace not found".to_string())?
     };
 
-    // Check engine type - default to Claude if not specified
-    let is_claude_engine = entry
-        .settings
-        .engine_type
-        .as_deref()
-        .map(|e| e.eq_ignore_ascii_case("claude"))
-        .unwrap_or(true);
-
-    if is_claude_engine {
-        // For Claude: No persistent session needed, already "connected"
+    if !workspaces_core::workspace_requires_persistent_session(&entry) {
+        // Claude/Gemini/OpenCode do not require a persistent workspace session.
         Ok(())
     } else {
         // For Codex: Use existing session spawn logic

@@ -458,6 +458,18 @@ export async function interruptTurn(
   return invoke("turn_interrupt", { workspaceId, threadId, turnId });
 }
 
+export async function engineInterruptTurn(
+  workspaceId: string,
+  turnId: string,
+  engine?: EngineType | null,
+): Promise<void> {
+  return invoke("engine_interrupt_turn", {
+    workspaceId,
+    turnId,
+    engine: engine ?? null,
+  });
+}
+
 export async function compactThreadContext(
   workspaceId: string,
   threadId: string,

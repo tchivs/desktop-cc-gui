@@ -214,7 +214,7 @@ async function mapWithConcurrency<T>(
 }
 
 function normalizeComparableWorkspacePath(path: string): string {
-  return normalizeWindowsPathForComparison(normalizeRootPath(path).trim());
+  return normalizeWindowsPathForComparison(normalizeRootPath(stripFileUri(path)).trim());
 }
 
 function normalizeWindowsPathForComparison(path: string): string {
@@ -230,6 +230,67 @@ function normalizeWindowsPathForComparison(path: string): string {
   return path;
 }
 
+function stripFileUri(path: string): string {
+  const trimmed = path.trim();
+  if (!trimmed.toLowerCase().startsWith("file://")) {
+    return trimmed;
+  }
+  try {
+    const url = new URL(trimmed);
+    const pathname = decodeURIComponent(url.pathname || "");
+    if (!pathname) {
+      return trimmed;
+    }
+    const host = decodeURIComponent(url.hostname || "");
+    const lowerHost = host.toLowerCase();
+    if (/^[A-Za-z]$/.test(host) && pathname.startsWith("/")) {
+      return `${host.toUpperCase()}:${pathname}`;
+    }
+    if (lowerHost === "localhost") {
+      if (/^\/[A-Za-z]:\//.test(pathname)) {
+        return pathname.slice(1);
+      }
+      return pathname;
+    }
+    if (host) {
+      return `//${host}${pathname}`;
+    }
+    if (/^\/[A-Za-z]:\//.test(pathname)) {
+      return pathname.slice(1);
+    }
+    return pathname;
+  } catch {
+    return trimmed;
+  }
+}
+
+function addMacVolumeDataVariants(path: string, variants: Set<string>) {
+  if (path.startsWith("/System/Volumes/Data/")) {
+    variants.add(path.slice("/System/Volumes/Data".length));
+    return;
+  }
+  if (path.startsWith("/")) {
+    variants.add(`/System/Volumes/Data${path}`);
+  }
+}
+
+function addWindowsDriveShellVariants(path: string, variants: Set<string>) {
+  const winDriveMatch = path.match(/^([A-Za-z]):\/(.+)$/);
+  if (winDriveMatch) {
+    const drive = winDriveMatch[1]?.toLowerCase() ?? "";
+    const rest = winDriveMatch[2] ?? "";
+    variants.add(`/${drive}/${rest}`);
+    variants.add(`/mnt/${drive}/${rest}`);
+  }
+  const shellDriveMatch = path.match(/^\/(?:(?:mnt)\/)?([A-Za-z])\/(.+)$/);
+  if (shellDriveMatch) {
+    const drive = shellDriveMatch[1]?.toLowerCase() ?? "";
+    const rest = shellDriveMatch[2] ?? "";
+    variants.add(`${drive.toUpperCase()}:/${rest}`);
+    variants.add(`${drive}:/${rest}`);
+  }
+}
+
 function buildWorkspacePathVariants(path: string): Set<string> {
   const normalized = normalizeComparableWorkspacePath(path);
   const variants = new Set<string>();
@@ -242,6 +303,8 @@ function buildWorkspacePathVariants(path: string): Set<string> {
   } else if (normalized.startsWith("/")) {
     variants.add(`/private${normalized}`);
   }
+  addMacVolumeDataVariants(normalized, variants);
+  addWindowsDriveShellVariants(normalized, variants);
   if (/^[A-Za-z]:/.test(normalized)) {
     variants.add(`${normalized.charAt(0).toLowerCase()}${normalized.slice(1)}`);
     variants.add(normalized.toLowerCase());

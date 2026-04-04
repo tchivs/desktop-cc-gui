@@ -899,7 +899,14 @@ pub(crate) fn list_external_spec_tree_inner(
     spec_root: &str,
     max_files: usize,
 ) -> Result<WorkspaceFilesResponse, String> {
+    // External spec probing is a pre-send path for some flows; keep it bounded
+    // so deep trees cannot stall the first-turn UX.
+    const EXTERNAL_SPEC_TREE_MAX_FILES: usize = 8_000;
     let resolved = resolve_external_spec_root(spec_root)?;
+    let effective_max_files = max_files.min(EXTERNAL_SPEC_TREE_MAX_FILES).max(1);
+    let max_directories = effective_max_files.saturating_mul(2).max(1_000);
+    let scan_started_at = Instant::now();
+    let mut scanned_entries = 0usize;
     let mut files = Vec::new();
     let mut directories = vec!["openspec".to_string()];
     if !resolved.exists {
@@ -930,10 +937,14 @@ pub(crate) fn list_external_spec_tree_inner(
         .build();
 
     for entry in walker {
+        if workspace_scan_budget_reached(scan_started_at, scanned_entries) {
+            break;
+        }
         let entry = match entry {
             Ok(entry) => entry,
             Err(_) => continue,
         };
+        scanned_entries = scanned_entries.saturating_add(1);
         let rel_path = match entry.path().strip_prefix(&root) {
             Ok(path) => path,
             Err(_) => continue,
@@ -944,10 +955,12 @@ pub(crate) fn list_external_spec_tree_inner(
         }
         let logical = format!("openspec/{normalized}");
         if entry.file_type().is_some_and(|ft| ft.is_dir()) {
-            directories.push(logical);
+            if directories.len() < max_directories {
+                directories.push(logical);
+            }
         } else if entry.file_type().is_some_and(|ft| ft.is_file()) {
             files.push(logical);
-            if files.len() >= max_files {
+            if files.len() >= effective_max_files {
                 break;
             }
         }

@@ -9,6 +9,49 @@ type UseCustomCommandsOptions = {
   workspaceId?: string | null;
 };
 
+const EMPTY_CLAUDE_COMMANDS_RETRY_COOLDOWN_MS = 15_000;
+
+function normalizeCommandsPayload(response: unknown): CustomCommandOption[] {
+  const responsePayload = response as any;
+  let rawCommands: any[] = [];
+  if (Array.isArray(response)) {
+    rawCommands = response;
+  } else if (Array.isArray(responsePayload?.commands)) {
+    rawCommands = responsePayload.commands;
+  } else if (Array.isArray(responsePayload?.result?.commands)) {
+    rawCommands = responsePayload.result.commands;
+  } else if (Array.isArray(responsePayload?.result)) {
+    rawCommands = responsePayload.result;
+  }
+  return rawCommands
+    .map((item: any) => {
+      let argumentHint: string | undefined;
+      if (item.argumentHint) {
+        argumentHint = String(item.argumentHint);
+      } else if (item.argument_hint) {
+        argumentHint = String(item.argument_hint);
+      }
+
+      const rawName = String(item.name ?? "");
+      const trimmedName = rawName.trim();
+      const normalizedName = trimmedName.startsWith("/")
+        ? trimmedName.slice(1)
+        : trimmedName;
+      const source = item.source ? String(item.source) : undefined;
+
+      return {
+        name: normalizedName,
+        path: String(item.path ?? ""),
+        description: item.description ? String(item.description) : undefined,
+        argumentHint,
+        content: String(item.content ?? ""),
+        ...(source ? { source } : {}),
+      };
+    })
+    .filter((entry) => entry.name)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export function useCustomCommands({
   onDebug,
   activeEngine,
@@ -16,6 +59,7 @@ export function useCustomCommands({
 }: UseCustomCommandsOptions) {
   const [commands, setCommands] = useState<CustomCommandOption[]>([]);
   const inFlight = useRef(false);
+  const lastEmptyBurstByWorkspaceRef = useRef<Map<string, number>>(new Map());
 
   const logCommandError = useCallback(
     (idSuffix: string, label: string, error: unknown) => {
@@ -55,44 +99,57 @@ export function useCustomCommands({
         label: "commands/list response",
         payload: response,
       });
-      const responsePayload = response as any;
-      let rawCommands: any[] = [];
-      if (Array.isArray(response)) {
-        rawCommands = response;
-      } else if (Array.isArray(responsePayload?.commands)) {
-        rawCommands = responsePayload.commands;
-      } else if (Array.isArray(responsePayload?.result?.commands)) {
-        rawCommands = responsePayload.result.commands;
-      } else if (Array.isArray(responsePayload?.result)) {
-        rawCommands = responsePayload.result;
-      }
-      const data: CustomCommandOption[] = rawCommands
-        .map((item: any) => {
-          let argumentHint: string | undefined;
-          if (item.argumentHint) {
-            argumentHint = String(item.argumentHint);
-          } else if (item.argument_hint) {
-            argumentHint = String(item.argument_hint);
+      let data = normalizeCommandsPayload(response);
+      if (
+        activeEngine !== "opencode"
+        && workspaceId
+        && data.length === 0
+      ) {
+        const now = Date.now();
+        const lastBurstAt = lastEmptyBurstByWorkspaceRef.current.get(workspaceId) ?? 0;
+        const canRetryBurst =
+          now - lastBurstAt >= EMPTY_CLAUDE_COMMANDS_RETRY_COOLDOWN_MS;
+
+        if (canRetryBurst) {
+          lastEmptyBurstByWorkspaceRef.current.set(workspaceId, now);
+          const retryResponse = await getClaudeCommandsList(workspaceId);
+          onDebug?.({
+            id: `${Date.now()}-server-commands-list-retry`,
+            timestamp: Date.now(),
+            source: "server",
+            label: "commands/list retry response",
+            payload: retryResponse,
+          });
+          data = normalizeCommandsPayload(retryResponse);
+
+          if (data.length === 0) {
+            const globalFallbackResponse = await getClaudeCommandsList(null);
+            onDebug?.({
+              id: `${Date.now()}-server-commands-list-global-fallback`,
+              timestamp: Date.now(),
+              source: "server",
+              label: "commands/list global fallback response",
+              payload: globalFallbackResponse,
+            });
+            data = normalizeCommandsPayload(globalFallbackResponse);
           }
-
-          const rawName = String(item.name ?? "");
-          const trimmedName = rawName.trim();
-          const normalizedName = trimmedName.startsWith("/")
-            ? trimmedName.slice(1)
-            : trimmedName;
-          const source = item.source ? String(item.source) : undefined;
-
-          return {
-            name: normalizedName,
-            path: String(item.path ?? ""),
-            description: item.description ? String(item.description) : undefined,
-            argumentHint,
-            content: String(item.content ?? ""),
-            ...(source ? { source } : {}),
-          };
-        })
-        .filter((entry) => entry.name)
-        .sort((a, b) => a.name.localeCompare(b.name));
+        } else {
+          onDebug?.({
+            id: `${Date.now()}-server-commands-list-retry-skipped`,
+            timestamp: Date.now(),
+            source: "client",
+            label: "commands/list retry skipped by cooldown",
+            payload: {
+              workspaceId,
+              cooldownMs: EMPTY_CLAUDE_COMMANDS_RETRY_COOLDOWN_MS,
+              elapsedMs: now - lastBurstAt,
+            },
+          });
+        }
+      }
+      if (workspaceId && data.length > 0) {
+        lastEmptyBurstByWorkspaceRef.current.delete(workspaceId);
+      }
       setCommands(data);
     } catch (error) {
       logCommandError("client-commands-list-error", "commands/list error", error);

@@ -2,6 +2,46 @@
 
 ---
 
+##### **2026年4月4日（v0.3.9）**
+
+中文：
+
+✨ Features
+- 侧边栏新增悬停图钉交互，并支持固定区一键取消固定，提升会话管理效率
+- 优化引擎核心流程，增强多模块协同下的性能与稳定性
+
+🔧 Improvements
+- 将 `/review` 命令匹配逻辑升级为命令头严格匹配，并兼容 review-like 自定义命令
+- 加固线程路径匹配的 Win/mac 跨平台兼容性，降低路径判定偏差
+
+🐛 Fixes
+- 修复 Gemini `sessionId` 提取过严导致的会话续传失败与消息拆会话问题
+- 修复固定会话后项目列表残留与刷新延迟问题
+- 修复深色主题下最终消息与推理边界不可见问题，并补齐兼容回退
+- 修复多会话 stop 误伤及首次 stop 不生效问题
+- 修复 Claude 自定义命令列表空响应场景下的重试与回退稳定性
+- 修复 Gemini pending 会话上下文无法连续关联问题
+
+English:
+
+✨ Features
+- Add hover-to-pin interactions in the sidebar and one-click unpin for the pinned section to improve session management
+- Optimize core engine flow to improve multi-module performance and runtime stability
+
+🔧 Improvements
+- Tighten `/review` parsing with strict command-head matching while keeping compatibility with review-like custom commands
+- Harden cross-platform thread-path matching for Win/mac to reduce path-resolution drift
+
+🐛 Fixes
+- Fix overly strict Gemini `sessionId` extraction that caused resume failures and message split sessions
+- Fix stale project-list residues and delayed refresh after pinning sessions
+- Fix invisible final/reasoning boundaries in dark theme and add compatibility fallback rendering
+- Fix multi-session stop collateral impact and first-stop ineffective behavior
+- Harden retry and fallback behavior when Claude custom command list responses are empty
+- Fix broken continuity for Gemini pending-session context association
+
+---
+
 ##### **2026年4月1日（v0.3.7）**
 
 中文：

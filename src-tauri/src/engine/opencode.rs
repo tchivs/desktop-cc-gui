@@ -601,6 +601,21 @@ impl OpenCodeSession {
         active.clear();
         Ok(())
     }
+
+    pub async fn interrupt_turn(&self, turn_id: &str) -> Result<(), String> {
+        self.interrupted.store(true, Ordering::SeqCst);
+        let mut child = {
+            let mut active = self.active_processes.lock().await;
+            active.remove(turn_id)
+        };
+        if let Some(child_proc) = child.as_mut() {
+            child_proc
+                .kill()
+                .await
+                .map_err(|e| format!("Failed to kill process: {}", e))?;
+        }
+        Ok(())
+    }
 }
 
 fn extract_session_id(event: &Value) -> Option<String> {

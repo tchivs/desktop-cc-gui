@@ -63,6 +63,7 @@ pub(crate) fn invoke_handler(
         crate::engine::engine_send_message,
         crate::engine::engine_send_message_sync,
         crate::engine::engine_interrupt,
+        crate::engine::engine_interrupt_turn,
         crate::engine::list_claude_sessions,
         crate::engine::load_claude_session,
         crate::engine::fork_claude_session,

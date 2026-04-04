@@ -249,9 +249,33 @@ export function resolvePlanStepStatusForDisplay(
   return status;
 }
 
+function parseSlashCommandHead(input: string): { command: string; rest: string } | null {
+  const trimmed = input.trim();
+  if (!trimmed.startsWith("/")) {
+    return null;
+  }
+  const withoutSlash = trimmed.slice(1);
+  if (!withoutSlash) {
+    return null;
+  }
+  const token = withoutSlash.split(/\s+/, 1)[0]?.trim();
+  if (!token) {
+    return null;
+  }
+  const rest = withoutSlash.slice(token.length).trim();
+  return {
+    command: token.toLowerCase(),
+    rest,
+  };
+}
+
 export function parseReviewTarget(input: string): ReviewTarget {
   const trimmed = input.trim();
-  const rest = trimmed.replace(/^\/review\b/i, "").trim();
+  const parsed = parseSlashCommandHead(trimmed);
+  const rest =
+    parsed && parsed.command === "review"
+      ? parsed.rest
+      : trimmed;
   if (!rest) {
     return { type: "uncommittedChanges" };
   }

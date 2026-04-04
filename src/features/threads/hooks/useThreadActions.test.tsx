@@ -998,6 +998,182 @@ describe("useThreadActions", () => {
     });
   });
 
+  it("matches mac workspace path when thread cwd includes /System/Volumes/Data prefix", async () => {
+    const macWorkspace: WorkspaceInfo = {
+      ...workspace,
+      id: "ws-mac",
+      path: "/Users/chen/project",
+    };
+    vi.mocked(listThreads).mockResolvedValue({
+      result: {
+        data: [
+          {
+            id: "thread-mac-1",
+            cwd: "/System/Volumes/Data/Users/chen/project/src",
+            preview: "Mac data volume path",
+            updated_at: 6400,
+          },
+        ],
+        nextCursor: null,
+      },
+    });
+    vi.mocked(getThreadTimestamp).mockImplementation((thread) => {
+      const value = (thread as Record<string, unknown>).updated_at as number;
+      return value ?? 0;
+    });
+
+    const { result, dispatch } = renderActions();
+
+    await act(async () => {
+      await result.current.listThreadsForWorkspace(macWorkspace);
+    });
+
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "setThreads",
+      workspaceId: "ws-mac",
+      threads: [
+        {
+          id: "thread-mac-1",
+          name: "Mac data volume path",
+          updatedAt: 6400,
+          engineSource: "codex",
+        },
+      ],
+    });
+  });
+
+  it("matches file:// cwd URI on Windows workspace", async () => {
+    const windowsWorkspace: WorkspaceInfo = {
+      ...workspace,
+      id: "ws-win-uri",
+      path: "C:\\Users\\Chen\\project",
+    };
+    vi.mocked(listThreads).mockResolvedValue({
+      result: {
+        data: [
+          {
+            id: "thread-win-uri-1",
+            cwd: "file:///C:/Users/Chen/project/src",
+            preview: "Windows file URI path",
+            updated_at: 6500,
+          },
+        ],
+        nextCursor: null,
+      },
+    });
+    vi.mocked(getThreadTimestamp).mockImplementation((thread) => {
+      const value = (thread as Record<string, unknown>).updated_at as number;
+      return value ?? 0;
+    });
+
+    const { result, dispatch } = renderActions();
+
+    await act(async () => {
+      await result.current.listThreadsForWorkspace(windowsWorkspace);
+    });
+
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "setThreads",
+      workspaceId: "ws-win-uri",
+      threads: [
+        {
+          id: "thread-win-uri-1",
+          name: "Windows file URI path",
+          updatedAt: 6500,
+          engineSource: "codex",
+        },
+      ],
+    });
+  });
+
+  it("matches file://C:/ cwd URI on Windows workspace", async () => {
+    const windowsWorkspace: WorkspaceInfo = {
+      ...workspace,
+      id: "ws-win-uri-host-drive",
+      path: "C:\\Users\\Chen\\project",
+    };
+    vi.mocked(listThreads).mockResolvedValue({
+      result: {
+        data: [
+          {
+            id: "thread-win-uri-host-drive-1",
+            cwd: "file://C:/Users/Chen/project/src",
+            preview: "Windows file URI host drive path",
+            updated_at: 6510,
+          },
+        ],
+        nextCursor: null,
+      },
+    });
+    vi.mocked(getThreadTimestamp).mockImplementation((thread) => {
+      const value = (thread as Record<string, unknown>).updated_at as number;
+      return value ?? 0;
+    });
+
+    const { result, dispatch } = renderActions();
+
+    await act(async () => {
+      await result.current.listThreadsForWorkspace(windowsWorkspace);
+    });
+
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "setThreads",
+      workspaceId: "ws-win-uri-host-drive",
+      threads: [
+        {
+          id: "thread-win-uri-host-drive-1",
+          name: "Windows file URI host drive path",
+          updatedAt: 6510,
+          engineSource: "codex",
+        },
+      ],
+    });
+  });
+
+  it("matches Windows workspace path when thread cwd uses /mnt/c style path", async () => {
+    const windowsWorkspace: WorkspaceInfo = {
+      ...workspace,
+      id: "ws-win-mnt",
+      path: "C:\\Users\\Chen\\project",
+    };
+    vi.mocked(listThreads).mockResolvedValue({
+      result: {
+        data: [
+          {
+            id: "thread-win-mnt-1",
+            cwd: "/mnt/c/Users/Chen/project/src",
+            preview: "Windows mnt path",
+            updated_at: 6600,
+          },
+        ],
+        nextCursor: null,
+      },
+    });
+    vi.mocked(getThreadTimestamp).mockImplementation((thread) => {
+      const value = (thread as Record<string, unknown>).updated_at as number;
+      return value ?? 0;
+    });
+
+    const { result, dispatch } = renderActions();
+
+    await act(async () => {
+      await result.current.listThreadsForWorkspace(windowsWorkspace);
+    });
+
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "setThreads",
+      workspaceId: "ws-win-mnt",
+      threads: [
+        {
+          id: "thread-win-mnt-1",
+          name: "Windows mnt path",
+          updatedAt: 6600,
+          engineSource: "codex",
+        },
+      ],
+    });
+  });
+
   it("filters archived and Codex helper thread entries while keeping vscode sessions", async () => {
     vi.mocked(listThreads).mockResolvedValue({
       result: {

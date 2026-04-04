@@ -9,6 +9,8 @@ vi.mock("react-i18next", () => ({
     t: (key: string) => {
       const translations: Record<string, string> = {
         "threads.autoNaming": "Auto naming...",
+        "threads.pin": "Pin",
+        "threads.unpin": "Unpin",
       };
       return translations[key] ?? key;
     },
@@ -41,6 +43,7 @@ const baseProps = {
   getThreadTime: () => "1h",
   isThreadPinned: () => true,
   isThreadAutoNaming: () => false,
+  onToggleThreadPin: vi.fn(),
   onSelectThread: vi.fn(),
   onShowThreadMenu: vi.fn(),
 };
@@ -67,7 +70,7 @@ describe("PinnedThreadList", () => {
     expect(row.querySelector(".thread-status")?.className).toContain(
       "reviewing",
     );
-    expect(screen.getByLabelText("Pinned")).toBeTruthy();
+    expect(row.querySelector(".thread-pin-toggle")).toBeTruthy();
 
     fireEvent.click(row);
     expect(onSelectThread).toHaveBeenCalledWith("ws-1", "thread-1");
@@ -116,6 +119,34 @@ describe("PinnedThreadList", () => {
 
     const engineBadge = secondRow.querySelector(".thread-engine-badge");
     expect(engineBadge?.classList.contains("is-processing")).toBe(true);
+  });
+
+  it("allows unpinning from pinned list without selecting the thread", () => {
+    const onToggleThreadPin = vi.fn();
+    const onSelectThread = vi.fn();
+
+    const { container } = render(
+      <PinnedThreadList
+        {...baseProps}
+        onToggleThreadPin={onToggleThreadPin}
+        onSelectThread={onSelectThread}
+      />,
+    );
+
+    const row = container.querySelector(".thread-row");
+    expect(row).toBeTruthy();
+    if (!row) {
+      throw new Error("Missing pinned row");
+    }
+    const pinToggle = row.querySelector(".thread-pin-toggle");
+    expect(pinToggle).toBeTruthy();
+    if (!pinToggle) {
+      throw new Error("Missing pin toggle");
+    }
+
+    fireEvent.click(pinToggle);
+    expect(onToggleThreadPin).toHaveBeenCalledWith("ws-1", "thread-1");
+    expect(onSelectThread).not.toHaveBeenCalled();
   });
 
   it("shows auto naming loading badge for pinned thread", () => {

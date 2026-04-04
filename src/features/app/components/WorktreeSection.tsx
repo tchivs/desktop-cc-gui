@@ -46,6 +46,7 @@ type WorktreeSectionProps = {
   getThreadTime: (thread: ThreadSummary) => string | null;
   isThreadPinned: (workspaceId: string, threadId: string) => boolean;
   isThreadAutoNaming: (workspaceId: string, threadId: string) => boolean;
+  onToggleThreadPin: (workspaceId: string, threadId: string) => void;
   getPinTimestamp: (workspaceId: string, threadId: string) => number | null;
   onSelectWorkspace: (id: string) => void;
   onConnectWorkspace: (workspace: WorkspaceInfo) => void;
@@ -89,6 +90,7 @@ export function WorktreeSection({
   getThreadTime,
   isThreadPinned,
   isThreadAutoNaming,
+  onToggleThreadPin,
   getPinTimestamp,
   onSelectWorkspace,
   onConnectWorkspace,
@@ -236,6 +238,7 @@ export function WorktreeSection({
                     getThreadTime={getThreadTime}
                     isThreadPinned={isThreadPinned}
                     isThreadAutoNaming={isThreadAutoNaming}
+                    onToggleThreadPin={onToggleThreadPin}
                     onToggleExpanded={onToggleExpanded}
                     onLoadOlderThreads={onLoadOlderThreads}
                     onSelectThread={onSelectThread}

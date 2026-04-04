@@ -711,6 +711,23 @@ impl ClaudeSession {
         Ok(())
     }
 
+    /// Interrupt a single turn without affecting other concurrent turns.
+    pub async fn interrupt_turn(&self, turn_id: &str) -> Result<(), String> {
+        self.interrupted.store(true, Ordering::SeqCst);
+        let mut child = {
+            let mut active = self.active_processes.lock().await;
+            active.remove(turn_id)
+        };
+        if let Some(child_proc) = child.as_mut() {
+            child_proc
+                .kill()
+                .await
+                .map_err(|e| format!("Failed to kill process: {}", e))?;
+        }
+        self.clear_turn_ephemeral_state(turn_id);
+        Ok(())
+    }
+
     /// Convert Claude event to unified format
     /// Handles Claude CLI 2.0.52+ event format: system, assistant, result, error
     fn convert_event(&self, turn_id: &str, event: &Value) -> Option<EngineEvent> {

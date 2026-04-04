@@ -17,6 +17,7 @@ pub(crate) mod error_mapper;
 pub mod events;
 pub mod gemini;
 pub mod gemini_history;
+pub(crate) mod gemini_proxy_guard;
 pub mod manager;
 pub mod opencode;
 pub mod status;

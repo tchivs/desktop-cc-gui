@@ -2841,6 +2841,44 @@ pub async fn engine_interrupt(
     }
 }
 
+/// Interrupt a specific turn for the active engine.
+#[tauri::command]
+pub async fn engine_interrupt_turn(
+    workspace_id: String,
+    turn_id: String,
+    engine: Option<EngineType>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let manager = &state.engine_manager;
+    let active_engine = manager.get_active_engine().await;
+    let target_engine = engine.unwrap_or(active_engine);
+
+    match target_engine {
+        EngineType::Claude => {
+            if let Some(session) = manager.claude_manager.get_session(&workspace_id).await {
+                session.interrupt_turn(&turn_id).await?;
+            }
+            Ok(())
+        }
+        EngineType::Codex => {
+            // Codex interrupts are handled via turn_interrupt RPC from the frontend.
+            Ok(())
+        }
+        EngineType::OpenCode => {
+            if let Some(session) = manager.get_opencode_session(&workspace_id).await {
+                session.interrupt_turn(&turn_id).await?;
+            }
+            Ok(())
+        }
+        EngineType::Gemini => {
+            if let Some(session) = manager.get_gemini_session(&workspace_id).await {
+                session.interrupt_turn(&turn_id).await?;
+            }
+            Ok(())
+        }
+    }
+}
+
 /// List Claude Code session history for a workspace path.
 /// Reads JSONL files from ~/.claude/projects/{encoded-path}/.
 #[tauri::command]

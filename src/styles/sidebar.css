@@ -1948,7 +1948,7 @@
   align-items: center;
   gap: 8px;
   min-height: var(--sidebar-row-height-thread);
-  padding: 2px 8px 2px calc(6px + var(--thread-indent, 0px));
+  padding: 2px 8px 2px calc(10px + var(--thread-indent, 0px));
   border-radius: var(--sidebar-row-radius);
   color: var(--text-quiet);
   font-size: 14px;
@@ -1964,6 +1964,10 @@
   border: none;
   width: 100%;
   text-align: left;
+}
+
+.thread-row.has-pin-toggle {
+  padding-left: calc(24px + var(--thread-indent, 0px));
 }
 
 .thread-row:hover {
@@ -2001,6 +2005,54 @@
   -webkit-mask-size: contain;
   -webkit-mask-repeat: no-repeat;
   flex-shrink: 0;
+}
+
+.thread-pin-toggle {
+  position: absolute;
+  left: calc(6px + var(--thread-indent, 0px));
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-faint);
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.14s ease, color 0.14s ease, background-color 0.14s ease;
+}
+
+.thread-row:hover .thread-pin-toggle,
+.thread-row:focus-within .thread-pin-toggle {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.thread-pin-toggle:hover,
+.thread-pin-toggle:focus-visible {
+  color: var(--text-strong);
+  background: color-mix(in srgb, var(--surface-hover) 76%, transparent);
+}
+
+.thread-pin-toggle.is-pinned {
+  color: var(--text-muted);
+}
+
+.thread-pin-toggle-icon {
+  width: 12px;
+  height: 12px;
+  background: currentColor;
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 17v5'/%3E%3Cpath d='M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16h14v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z'/%3E%3C/svg%3E");
+  mask-size: contain;
+  mask-repeat: no-repeat;
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 17v5'/%3E%3Cpath d='M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16h14v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z'/%3E%3C/svg%3E");
+  -webkit-mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
 }
 
 .thread-row:hover .thread-pin-icon {

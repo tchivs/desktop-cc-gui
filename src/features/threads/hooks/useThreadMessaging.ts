@@ -18,6 +18,7 @@ import {
   sendUserMessage as sendUserMessageService,
   startReview as startReviewService,
   interruptTurn as interruptTurnService,
+  engineInterruptTurn as engineInterruptTurnService,
   listMcpServerStatus as listMcpServerStatusService,
   engineSendMessage as engineSendMessageService,
   engineInterrupt as engineInterruptService,
@@ -28,8 +29,7 @@ import {
   getOpenCodeMcpStatus as getOpenCodeMcpStatusService,
   getOpenCodeStats as getOpenCodeStatsService,
   importOpenCodeSession as importOpenCodeSessionService,
-  listExternalSpecTree as listExternalSpecTreeService,
-  getWorkspaceFiles as getWorkspaceFilesService,
+  listGeminiSessions as listGeminiSessionsService,
   shareOpenCodeSession as shareOpenCodeSessionService,
   projectMemoryCaptureAuto as projectMemoryCaptureAutoService,
 } from "../../../services/tauri";
@@ -39,7 +39,7 @@ import {
   type InjectionResult,
 } from "../../project-memory/utils/memoryContextInjection";
 import { MEMORY_CONTEXT_SUMMARY_PREFIX } from "../../project-memory/utils/memoryMarkers";
-import { getClientStoreSync, writeClientStoreValue } from "../../../services/clientStorage";
+import { writeClientStoreValue } from "../../../services/clientStorage";
 import { expandCustomPromptText } from "../../../utils/customPrompts";
 import {
   asString,
@@ -56,7 +56,6 @@ import { useReviewPrompt } from "./useReviewPrompt";
 import { formatRelativeTime } from "../../../utils/time";
 import { pushErrorToast } from "../../../services/toasts";
 import { resolveAgentIconForAgent } from "../../../utils/agentIcons";
-import { normalizeSpecRootInput } from "../../spec/pathUtils";
 import { isValidModelId } from "../../composer/types/provider";
 import {
   clearPendingClaudeMcpOutputNotice,
@@ -64,6 +63,19 @@ import {
   setPendingClaudeMcpOutputNotice,
   rewriteClaudePlaywrightAlias,
 } from "../utils/claudeMcpRuntimeSnapshot";
+import {
+  buildCodexTextWithSpecRootPriority,
+  buildDefaultSpecRootPath,
+  isAbsoluteHostPath,
+  normalizeExtendedWindowsPath,
+  probeSessionSpecLink,
+  probeSessionSpecLinkWithTimeout,
+  resolveWorkspaceSpecRoot,
+  shouldProbeSessionSpecForEngine,
+  toFileUriFromAbsolutePath,
+  type SessionSpecLinkContext,
+  type SessionSpecLinkSource,
+} from "./threadMessagingSpecRoot";
 
 type SendMessageOptions = {
   skipPromptExpansion?: boolean;
@@ -83,22 +95,9 @@ type SendMessageOptions = {
   codexInvalidThreadRetryAttempted?: boolean;
 };
 
-const SPEC_ROOT_PRIORITY_MARKER = "[Spec Root Priority]";
-const SPEC_ROOT_SESSION_MARKER = "[Session Spec Link]";
 const AGENT_PROMPT_HEADER = "## Agent Role and Instructions";
 const AGENT_PROMPT_NAME_PREFIX = "Agent Name:";
 const AGENT_PROMPT_ICON_PREFIX = "Agent Icon:";
-
-type SessionSpecLinkSource = "custom" | "default";
-type SessionSpecProbeStatus = "visible" | "invalid" | "permissionDenied" | "malformed";
-
-type SessionSpecLinkContext = {
-  source: SessionSpecLinkSource;
-  rootPath: string;
-  status: SessionSpecProbeStatus;
-  reason: string | null;
-  checkedAt: number;
-};
 
 function normalizeCollaborationModeId(
   value: unknown,
@@ -148,6 +147,21 @@ function normalizeAccessMode(
   return mode;
 }
 
+function isUnknownEngineInterruptTurnMethodError(error: unknown): boolean {
+  const message = error instanceof Error
+    ? error.message
+    : typeof error === "string"
+      ? error
+      : (() => {
+          try {
+            return JSON.stringify(error);
+          } catch {
+            return String(error);
+          }
+        })();
+  return message.toLowerCase().includes("unknown method: engine_interrupt_turn");
+}
+
 function isLikelyForeignModelForGemini(modelId: string): boolean {
   const normalized = modelId.trim().toLowerCase();
   if (!normalized) {
@@ -182,163 +196,6 @@ function isValidClaudeModelForPassthrough(modelId: string): boolean {
     return false;
   }
   return isValidModelId(normalized);
-}
-
-function resolveWorkspaceSpecRoot(workspaceId: string): string | null {
-  const value = getClientStoreSync<string | null>("app", `specHub.specRoot.${workspaceId}`);
-  return normalizeSpecRootInput(value);
-}
-
-function buildDefaultSpecRootPath(workspacePath: string): string {
-  const trimmed = workspacePath.trim();
-  if (!trimmed) {
-    return "openspec";
-  }
-  const normalized = trimmed.replace(/[\\/]+$/, "");
-  const useBackslash = normalized.includes("\\") && !normalized.includes("/");
-  return `${normalized}${useBackslash ? "\\" : "/"}openspec`;
-}
-
-function normalizeExtendedWindowsPath(path: string): string {
-  if (path.startsWith("\\\\?\\UNC\\")) {
-    return `\\\\${path.slice("\\\\?\\UNC\\".length)}`;
-  }
-  if (path.startsWith("\\\\?\\")) {
-    return path.slice("\\\\?\\".length);
-  }
-  if (path.startsWith("//?/UNC/")) {
-    return `//${path.slice("//?/UNC/".length)}`;
-  }
-  if (path.startsWith("//?/")) {
-    return path.slice("//?/".length);
-  }
-  return path;
-}
-
-function isAbsoluteHostPath(path: string): boolean {
-  const normalized = normalizeExtendedWindowsPath(path);
-  if (normalized.startsWith("/")) {
-    return true;
-  }
-  if (/^[a-zA-Z]:[\\/]/.test(normalized)) {
-    return true;
-  }
-  if (/^\\\\[^\\]+\\[^\\]+/.test(normalized)) {
-    return true;
-  }
-  if (/^\/\/[^/]+\/[^/]+/.test(normalized)) {
-    return true;
-  }
-  return false;
-}
-
-function toFileUriFromAbsolutePath(path: string): string {
-  const normalized = normalizeExtendedWindowsPath(path).replace(/\\/g, "/");
-  const encodedPath = encodeURI(normalized);
-  if (/^[a-zA-Z]:\//.test(normalized)) {
-    return `file:///${encodedPath}`;
-  }
-  if (normalized.startsWith("//")) {
-    return `file:${encodedPath}`;
-  }
-  return `file://${encodedPath}`;
-}
-
-function classifySpecProbeError(errorMessage: string): SessionSpecProbeStatus {
-  if (/(permission denied|operation not permitted|eacces|eprem)/i.test(errorMessage)) {
-    return "permissionDenied";
-  }
-  return "invalid";
-}
-
-function hasOpenSpecStructure(
-  directories: string[],
-  files: string[],
-): { ok: boolean; reason: string | null } {
-  const hasChangesDir = directories.includes("openspec/changes");
-  const hasSpecsDir = directories.includes("openspec/specs");
-  if (!hasChangesDir || !hasSpecsDir) {
-    return {
-      ok: false,
-      reason: "Missing required openspec/changes or openspec/specs directory.",
-    };
-  }
-  const hasChangeArtifact = files.some(
-    (entry) =>
-      entry.startsWith("openspec/changes/") &&
-      (entry.endsWith("/proposal.md") || entry.endsWith("/tasks.md") || entry.endsWith("/design.md")),
-  );
-  if (!hasChangeArtifact) {
-    return {
-      ok: false,
-      reason: "Missing expected change artifacts under openspec/changes.",
-    };
-  }
-  return { ok: true, reason: null };
-}
-
-async function probeSessionSpecLink(
-  workspaceId: string,
-  workspacePath: string,
-  source: SessionSpecLinkSource,
-  rootPath: string,
-): Promise<SessionSpecLinkContext> {
-  try {
-    const snapshot =
-      source === "custom"
-        ? await listExternalSpecTreeService(workspaceId, rootPath)
-        : await getWorkspaceFilesService(workspaceId);
-    const structure = hasOpenSpecStructure(snapshot.directories, snapshot.files);
-    if (!structure.ok) {
-      return {
-        source,
-        rootPath,
-        status: "malformed",
-        reason: structure.reason,
-        checkedAt: Date.now(),
-      };
-    }
-    return {
-      source,
-      rootPath: source === "custom" ? rootPath : buildDefaultSpecRootPath(workspacePath),
-      status: "visible",
-      reason: null,
-      checkedAt: Date.now(),
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      source,
-      rootPath,
-      status: classifySpecProbeError(message),
-      reason: message,
-      checkedAt: Date.now(),
-    };
-  }
-}
-
-function buildCodexTextWithSpecRootPriority(
-  text: string,
-  sessionSpecLink: SessionSpecLinkContext,
-): string {
-  const trimmedText = text.trim();
-  if (!trimmedText) {
-    return text;
-  }
-  if (trimmedText.includes(SPEC_ROOT_PRIORITY_MARKER) || trimmedText.includes(SPEC_ROOT_SESSION_MARKER)) {
-    return text;
-  }
-  const statusHint = `${SPEC_ROOT_SESSION_MARKER} source=${sessionSpecLink.source}; status=${sessionSpecLink.status}; root=${sessionSpecLink.rootPath}.`;
-  const policyHint =
-    sessionSpecLink.status === "visible"
-      ? `${SPEC_ROOT_PRIORITY_MARKER} Active external OpenSpec root: ${sessionSpecLink.rootPath}. When checking spec visibility or reading specs, verify and prioritize this root first, then fallback to workspace/openspec and sibling conventions. Do not conclude 'missing spec' before checking this external root.`
-      : `${SPEC_ROOT_PRIORITY_MARKER} Explicit session spec link is currently unusable (status=${sessionSpecLink.status}, root=${sessionSpecLink.rootPath}). Do not silently fallback to inferred paths for visibility verdicts. First report this link status and provide remediation (rebind or restore default), then continue after repair.`;
-  const reasonHint = sessionSpecLink.reason ? `Probe reason: ${sessionSpecLink.reason}` : "";
-  const systemHint = [statusHint, policyHint, reasonHint].filter(Boolean).join(" ");
-  if (/\[User Input\]\s*/.test(trimmedText)) {
-    return `[System] ${systemHint}\n${trimmedText}`;
-  }
-  return `[System] ${systemHint}\n[User Input] ${trimmedText}`;
 }
 
 function buildReviewCommandText(target: ReviewTarget): string {
@@ -440,6 +297,68 @@ function extractSessionIdFromEngineSendResponse(
     if (normalized) {
       return normalized;
     }
+  }
+  return null;
+}
+
+type GeminiSessionSummary = {
+  sessionId: string;
+  updatedAt: number;
+};
+
+function normalizeGeminiSessionSummary(value: unknown): GeminiSessionSummary | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const sessionId = normalizeSessionIdCandidate(record.sessionId ?? record.session_id);
+  if (!sessionId) {
+    return null;
+  }
+  const rawUpdatedAt = record.updatedAt ?? record.updated_at;
+  const updatedAt =
+    typeof rawUpdatedAt === "number" && Number.isFinite(rawUpdatedAt)
+      ? rawUpdatedAt
+      : typeof rawUpdatedAt === "string"
+        ? Number(rawUpdatedAt)
+        : 0;
+  return {
+    sessionId,
+    updatedAt: Number.isFinite(updatedAt) ? updatedAt : 0,
+  };
+}
+
+function pickLikelyGeminiSessionId(
+  payload: unknown,
+  minUpdatedAt: number,
+): string | null {
+  const nestedSessions =
+    payload && typeof payload === "object"
+      ? (payload as Record<string, unknown>).sessions
+      : null;
+  const entries = Array.isArray(payload)
+    ? payload
+    : Array.isArray(nestedSessions)
+      ? nestedSessions
+      : [];
+  const summaries = entries
+    .map(normalizeGeminiSessionSummary)
+    .filter((entry): entry is GeminiSessionSummary => entry !== null);
+  if (summaries.length === 0) {
+    return null;
+  }
+  const recents = summaries.filter((entry) => entry.updatedAt >= minUpdatedAt);
+  // Safety first: only bind when there is exactly one plausible candidate.
+  // This prevents cross-thread session hijack when multiple pending Gemini
+  // conversations update around the same time in the same workspace.
+  if (recents.length === 1) {
+    return recents[0]?.sessionId ?? null;
+  }
+  if (recents.length > 1) {
+    return null;
+  }
+  if (summaries.length === 1) {
+    return summaries[0]?.sessionId ?? null;
   }
   return null;
 }
@@ -559,6 +478,7 @@ export function useThreadMessaging({
   const { t, i18n } = useTranslation();
   const lastOpenCodeModelByThreadRef = useRef<Map<string, string>>(new Map());
   const claudeSessionIdByPendingThreadRef = useRef<Map<string, string>>(new Map());
+  const geminiSessionIdByPendingThreadRef = useRef<Map<string, string>>(new Map());
   const sessionSpecLinkByThreadRef = useRef<Map<string, SessionSpecLinkContext>>(new Map());
   const normalizeEngineSelection = useCallback(
     (
@@ -1052,16 +972,35 @@ export function useThreadMessaging({
         const customSpecRoot = resolveWorkspaceSpecRoot(workspace.id);
         let sessionSpecLink = sessionSpecLinkByThreadRef.current.get(sessionSpecKey) ?? null;
         const shouldProbeSessionSpecLink =
+          shouldProbeSessionSpecForEngine(resolvedEngine) &&
           Boolean(customSpecRoot) &&
           (threadItems.length === 0 || !sessionSpecLink);
         if (shouldProbeSessionSpecLink && customSpecRoot) {
-          sessionSpecLink = await probeSessionSpecLink(
+          const probeStartAt = Date.now();
+          sessionSpecLink = await probeSessionSpecLinkWithTimeout(
             workspace.id,
             workspace.path,
             "custom",
             customSpecRoot,
           );
+          const probeDurationMs = Date.now() - probeStartAt;
           sessionSpecLinkByThreadRef.current.set(sessionSpecKey, sessionSpecLink);
+          onDebug?.({
+            id: `${Date.now()}-spec-root-probe`,
+            timestamp: Date.now(),
+            source: "client",
+            label: "specRoot/probe",
+            payload: {
+              workspaceId: workspace.id,
+              threadId,
+              engine: resolvedEngine,
+              source: "custom",
+              rootPath: customSpecRoot,
+              status: sessionSpecLink.status,
+              reason: sessionSpecLink.reason,
+              durationMs: probeDurationMs,
+            },
+          });
         }
         const shouldInjectSpecRootHintInPrompt =
           resolvedEngine === "codex" &&
@@ -1142,6 +1081,8 @@ export function useThreadMessaging({
               ? (claudeSessionIdByPendingThreadRef.current.get(threadId) ?? null)
             : resolvedEngine === "gemini" && threadId.startsWith("gemini:")
               ? threadId.slice("gemini:".length)
+            : resolvedEngine === "gemini" && threadId.startsWith("gemini-pending-")
+              ? (geminiSessionIdByPendingThreadRef.current.get(threadId) ?? null)
             : resolvedEngine === "opencode" && isOpenCodeSession
               ? threadId.slice("opencode:".length)
               : null;
@@ -1167,6 +1108,7 @@ export function useThreadMessaging({
             hasCustomName: Boolean(getCustomName(workspace.id, threadId)),
           });
 
+          const sendRequestedAt = Date.now();
           response = await engineSendMessageService(workspace.id, {
             text: finalText,
             engine: resolvedEngine,
@@ -1232,6 +1174,38 @@ export function useThreadMessaging({
                   threadId,
                   sessionId: responseSessionId,
                   source: "engineSendMessageResponse",
+                },
+              });
+            }
+          }
+          if (resolvedEngine === "gemini" && threadId.startsWith("gemini-pending-")) {
+            let responseSessionId = extractSessionIdFromEngineSendResponse(response);
+            if (!responseSessionId) {
+              const workspacePath = workspace.path?.trim();
+              if (workspacePath) {
+                try {
+                  const sessions = await listGeminiSessionsService(workspacePath, 6);
+                  responseSessionId = pickLikelyGeminiSessionId(
+                    sessions,
+                    sendRequestedAt - 120_000,
+                  );
+                } catch {
+                  responseSessionId = null;
+                }
+              }
+            }
+            if (responseSessionId) {
+              geminiSessionIdByPendingThreadRef.current.set(threadId, responseSessionId);
+              onDebug?.({
+                id: `${Date.now()}-client-gemini-session-cache`,
+                timestamp: Date.now(),
+                source: "client",
+                label: "thread/session cached",
+                payload: {
+                  workspaceId: workspace.id,
+                  threadId,
+                  sessionId: responseSessionId,
+                  source: "geminiSessionListFallback",
                 },
               });
             }
@@ -1640,7 +1614,7 @@ export function useThreadMessaging({
       pendingInterruptsRef.current.add(activeThreadId);
     }
 
-    // Determine if this is a Claude session
+    // Determine whether this thread is backed by a local CLI session.
     const resolvedThreadEngine = resolveThreadEngine(activeWorkspace.id, activeThreadId);
     const isCliManagedEngine = resolvedThreadEngine !== "codex";
 
@@ -1659,8 +1633,26 @@ export function useThreadMessaging({
     });
     try {
       if (isCliManagedEngine) {
-        // Claude/OpenCode: kill the local CLI process via engine_interrupt.
-        await engineInterruptService(activeWorkspace.id);
+        // Claude/OpenCode/Gemini: target only the current turn process.
+        // If turn id is not known yet, keep pending interrupt and let onTurnStarted
+        // execute a precise kill once the backend emits the real turn id.
+        if (activeTurnId) {
+          try {
+            await engineInterruptTurnService(
+              activeWorkspace.id,
+              activeTurnId,
+              resolvedThreadEngine,
+            );
+          } catch (error) {
+            if (isUnknownEngineInterruptTurnMethodError(error)) {
+              // Compatibility fallback for stale daemon/runtime that doesn't
+              // implement engine_interrupt_turn yet.
+              await engineInterruptService(activeWorkspace.id);
+            } else {
+              throw error;
+            }
+          }
+        }
       } else {
         // Codex: notify daemon via turn_interrupt RPC, plus engine_interrupt fallback.
         await Promise.allSettled([
@@ -1916,7 +1908,14 @@ export function useThreadMessaging({
         return;
       }
       const trimmed = text.trim();
-      const rest = trimmed.replace(/^\/review\b/i, "").trim();
+      if (!trimmed.startsWith("/")) {
+        return;
+      }
+      const commandToken = trimmed.slice(1).split(/\s+/, 1)[0]?.toLowerCase() ?? "";
+      if (commandToken !== "review") {
+        return;
+      }
+      const rest = trimmed.slice(commandToken.length + 1).trim();
       if (!rest) {
         openReviewPrompt();
         return;

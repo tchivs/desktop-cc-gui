@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   normalizePlanStepStatus,
   normalizePlanUpdate,
+  parseReviewTarget,
   resolvePlanStepStatusForDisplay,
   settlePlanInProgressSteps,
 } from "./threadNormalize";
@@ -73,5 +74,34 @@ describe("threadNormalize plan helpers", () => {
     expect(resolvePlanStepStatusForDisplay("inProgress", false)).toBe("pending");
     expect(resolvePlanStepStatusForDisplay("inProgress", true)).toBe("inProgress");
     expect(resolvePlanStepStatusForDisplay("completed", false)).toBe("completed");
+  });
+
+  it("parses /review custom target with strict command head matching", () => {
+    expect(parseReviewTarget("/review base main")).toEqual({
+      type: "baseBranch",
+      branch: "main",
+    });
+  });
+
+  it("does not treat /review-code as /review command", () => {
+    expect(parseReviewTarget("/review-code run full check")).toEqual({
+      type: "custom",
+      instructions: "/review-code run full check",
+    });
+  });
+
+  it("keeps /review-like command variants as custom instructions", () => {
+    expect(parseReviewTarget("/review:custom run")).toEqual({
+      type: "custom",
+      instructions: "/review:custom run",
+    });
+    expect(parseReviewTarget("/review_custom run")).toEqual({
+      type: "custom",
+      instructions: "/review_custom run",
+    });
+    expect(parseReviewTarget("/review.custom run")).toEqual({
+      type: "custom",
+      instructions: "/review.custom run",
+    });
   });
 });

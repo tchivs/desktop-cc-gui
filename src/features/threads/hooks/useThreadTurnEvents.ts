@@ -4,6 +4,7 @@ import type { DebugEntry } from "../../../types";
 import { useTranslation } from "react-i18next";
 import {
   engineInterrupt as engineInterruptService,
+  engineInterruptTurn as engineInterruptTurnService,
   interruptTurn as interruptTurnService,
 } from "../../../services/tauri";
 import { getThreadTimestamp } from "../../../utils/threadItems";
@@ -134,6 +135,27 @@ export function useThreadTurnEvents({
     },
     [onDebug],
   );
+  const migrateThreadInterruptGuards = useCallback(
+    (oldThreadId: string, newThreadId: string) => {
+      const result = {
+        movedPendingInterrupt: false,
+        movedInterruptedThread: false,
+      };
+      if (!oldThreadId || !newThreadId || oldThreadId === newThreadId) {
+        return result;
+      }
+      if (pendingInterruptsRef.current.delete(oldThreadId)) {
+        pendingInterruptsRef.current.add(newThreadId);
+        result.movedPendingInterrupt = true;
+      }
+      if (interruptedThreadsRef.current.delete(oldThreadId)) {
+        interruptedThreadsRef.current.add(newThreadId);
+        result.movedInterruptedThread = true;
+      }
+      return result;
+    },
+    [interruptedThreadsRef, pendingInterruptsRef],
+  );
   const resolvePendingAliasThread = useCallback(
     (
       workspaceId: string,
@@ -212,10 +234,13 @@ export function useThreadTurnEvents({
       if (pendingInterruptsRef.current.has(threadId)) {
         pendingInterruptsRef.current.delete(threadId);
         const engine = inferEngineFromThreadId(threadId);
-        if (engine === "gemini") {
-          void engineInterruptService(workspaceId).catch(() => {});
-        } else if (turnId) {
+        if (engine === "codex" && turnId) {
           void interruptTurnService(workspaceId, threadId, turnId).catch(() => {});
+        } else if (turnId) {
+          void engineInterruptTurnService(workspaceId, turnId, engine).catch(() => {
+            // Fallback for older runtimes missing turn-scoped interrupt.
+            void engineInterruptService(workspaceId).catch(() => {});
+          });
         }
         return;
       }
@@ -494,17 +519,6 @@ export function useThreadTurnEvents({
       }
 
       const newThreadId = `${enginePrefix}:${sessionId}`;
-      // Guard boundary: if backend already reports the finalized thread id,
-      // never remap a pending thread onto it.
-      if (threadId === newThreadId) {
-        logSessionTrace("skip:already-finalized", {
-          workspaceId,
-          threadId,
-          newThreadId,
-          enginePrefix,
-        });
-        return;
-      }
 
       const sameEnginePendingPrefix = `${enginePrefix}-pending-`;
       const sameEngineFinalizedPrefix = `${enginePrefix}:`;
@@ -541,7 +555,32 @@ export function useThreadTurnEvents({
       }
 
       let sourceThreadId: string | null = null;
-      if (threadId.startsWith(sameEnginePendingPrefix)) {
+      if (threadId === newThreadId) {
+        // Some runtimes emit session-id updates with finalized thread ids only.
+        // Rebind conservatively: only when we can map to the currently active
+        // pending thread for the same engine.
+        const pendingThreadId = enginePrefix === "opencode"
+          ? pendingOpenCode
+          : enginePrefix === "gemini"
+            ? pendingGemini
+            : pendingClaude;
+        if (
+          pendingThreadId?.startsWith(sameEnginePendingPrefix)
+          && pendingThreadId === activeThreadId
+        ) {
+          sourceThreadId = pendingThreadId;
+        } else {
+          logSessionTrace("skip:already-finalized", {
+            workspaceId,
+            threadId,
+            newThreadId,
+            enginePrefix,
+            activeThreadId,
+            pendingThreadId: pendingThreadId ?? null,
+          });
+          return;
+        }
+      } else if (threadId.startsWith(sameEnginePendingPrefix)) {
         sourceThreadId = threadId;
       } else if (shouldRebindActiveFinalizedThread) {
         sourceThreadId = threadId;
@@ -576,6 +615,25 @@ export function useThreadTurnEvents({
         enginePrefix,
         eventThreadId: threadId,
       });
+      const { movedPendingInterrupt } = migrateThreadInterruptGuards(
+        sourceThreadId,
+        newThreadId,
+      );
+      // If the user interrupted during pending->finalized rebind and the target
+      // thread already has an active turn id, execute interrupt immediately.
+      if (movedPendingInterrupt) {
+        const activeTurnId = getActiveTurnIdForThread?.(newThreadId) ?? null;
+        if (activeTurnId) {
+          pendingInterruptsRef.current.delete(newThreadId);
+          void engineInterruptTurnService(
+            workspaceId,
+            activeTurnId,
+            enginePrefix,
+          ).catch(() => {
+            void engineInterruptService(workspaceId).catch(() => {});
+          });
+        }
+      }
       // Rename the thread from claude-pending-* to claude:{sessionId}
       dispatch({
         type: "renameThreadId",
@@ -596,6 +654,9 @@ export function useThreadTurnEvents({
       renamePendingMemoryCaptureKey,
       renameThreadTitleMapping,
       resolvePendingThreadForSession,
+      migrateThreadInterruptGuards,
+      getActiveTurnIdForThread,
+      pendingInterruptsRef,
       activeThreadId,
     ],
   );

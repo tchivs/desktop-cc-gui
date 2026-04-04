@@ -81,20 +81,12 @@ pub(crate) async fn list_workspaces_core(
     let sessions = sessions.lock().await;
     let mut result = Vec::new();
     for entry in workspaces.values() {
-        // Determine connected status based on engine type:
-        // - Claude: Always "connected" (no persistent session needed)
-        // - Codex: Check if session exists in sessions HashMap
-        let is_claude_engine = entry
-            .settings
-            .engine_type
-            .as_deref()
-            .map(|e| e.eq_ignore_ascii_case("claude"))
-            .unwrap_or(true); // Default to Claude if not specified
-
-        let connected = if is_claude_engine {
-            true // Claude is always "connected"
-        } else {
+        // Engines using local CLI sessions (Claude/Gemini/OpenCode) are always connected.
+        // Codex requires a persistent app-server process tracked in sessions.
+        let connected = if workspace_requires_persistent_session(entry) {
             sessions.contains_key(&entry.id)
+        } else {
+            true
         };
         let name = normalize_workspace_display_name(&entry.name, &entry.path);
 
@@ -112,6 +104,15 @@ pub(crate) async fn list_workspaces_core(
     }
     sort_workspaces(&mut result);
     result
+}
+
+pub(crate) fn workspace_requires_persistent_session(entry: &WorkspaceEntry) -> bool {
+    entry
+        .settings
+        .engine_type
+        .as_deref()
+        .map(|value| value.eq_ignore_ascii_case("codex"))
+        .unwrap_or(false)
 }
 
 async fn resolve_entry_and_parent(
@@ -1358,11 +1359,16 @@ fn sort_workspaces(workspaces: &mut [WorkspaceInfo]) {
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_workspace_display_name, resolve_base_ref_to_commit,
+        list_workspaces_core, normalize_workspace_display_name, resolve_base_ref_to_commit,
         validate_local_branch_name_for_worktree, workspace_name_from_path,
+        workspace_requires_persistent_session,
     };
+    use crate::types::{WorkspaceEntry, WorkspaceKind, WorkspaceSettings};
+    use std::collections::HashMap;
     use git2::{Repository, Signature};
     use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
     use uuid::Uuid;
 
     fn init_git_repo() -> PathBuf {
@@ -1430,5 +1436,61 @@ mod tests {
         let error = resolve_base_ref_to_commit(&repo_path, "missing/ref")
             .expect_err("missing ref should fail");
         assert!(error.contains("Base ref not found"));
+    }
+
+    fn workspace_entry(id: &str, engine_type: Option<&str>) -> WorkspaceEntry {
+        let mut settings = WorkspaceSettings::default();
+        settings.engine_type = engine_type.map(ToString::to_string);
+        WorkspaceEntry {
+            id: id.to_string(),
+            name: id.to_string(),
+            path: format!("/tmp/{id}"),
+            codex_bin: None,
+            kind: WorkspaceKind::Main,
+            parent_id: None,
+            worktree: None,
+            settings,
+        }
+    }
+
+    #[test]
+    fn workspace_requires_persistent_session_only_for_codex() {
+        let codex = workspace_entry("ws-codex", Some("codex"));
+        let claude = workspace_entry("ws-claude", Some("claude"));
+        let gemini = workspace_entry("ws-gemini", Some("gemini"));
+        let opencode = workspace_entry("ws-opencode", Some("opencode"));
+
+        assert!(workspace_requires_persistent_session(&codex));
+        assert!(!workspace_requires_persistent_session(&claude));
+        assert!(!workspace_requires_persistent_session(&gemini));
+        assert!(!workspace_requires_persistent_session(&opencode));
+    }
+
+    #[tokio::test]
+    async fn list_workspaces_marks_non_persistent_engines_connected_without_sessions() {
+        let mut workspace_map = HashMap::new();
+        workspace_map.insert(
+            "ws-gemini".to_string(),
+            workspace_entry("ws-gemini", Some("gemini")),
+        );
+        workspace_map.insert(
+            "ws-opencode".to_string(),
+            workspace_entry("ws-opencode", Some("opencode")),
+        );
+        workspace_map.insert(
+            "ws-codex".to_string(),
+            workspace_entry("ws-codex", Some("codex")),
+        );
+
+        let workspaces = Mutex::new(workspace_map);
+        let sessions: Mutex<HashMap<String, Arc<crate::backend::app_server::WorkspaceSession>>> =
+            Mutex::new(HashMap::new());
+
+        let rows = list_workspaces_core(&workspaces, &sessions).await;
+        let by_id: HashMap<_, _> = rows.into_iter().map(|row| (row.id.clone(), row)).collect();
+
+        assert!(by_id.get("ws-gemini").is_some_and(|row| row.connected));
+        assert!(by_id.get("ws-opencode").is_some_and(|row| row.connected));
+        assert!(by_id.get("ws-codex").is_some_and(|row| !row.connected));
     }
 }

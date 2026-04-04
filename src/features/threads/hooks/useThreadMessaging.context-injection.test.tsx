@@ -47,6 +47,7 @@ vi.mock("../../../services/tauri", () => ({
   interruptTurn: vi.fn(),
   listMcpServerStatus: vi.fn(),
   engineSendMessage: vi.fn(),
+  engineInterruptTurn: vi.fn(),
   engineInterrupt: vi.fn(),
   projectMemoryCaptureAuto: vi.fn(),
 }));

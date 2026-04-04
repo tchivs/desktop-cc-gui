@@ -53,7 +53,8 @@
   justify-content: center;
   gap: 8px;
   text-align: center;
-  color: #111;
+  color: var(--text-strong);
+  color: color-mix(in srgb, var(--text-strong) 84%, var(--text-muted));
   font-size: 12px;
   letter-spacing: 0.03em;
   flex-wrap: nowrap;
@@ -73,14 +74,24 @@
 .messages-turn-boundary::before {
   left: 0;
   right: 50%;
-  background: linear-gradient(90deg, rgba(0, 0, 0, 0.12) 0%, rgba(0, 0, 0, 0.42) 100%);
+  background: linear-gradient(90deg, transparent 0%, var(--border-strong) 100%);
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--border-strong) 26%, transparent) 0%,
+    color-mix(in srgb, var(--border-strong) 86%, transparent) 100%
+  );
   clip-path: polygon(0 50%, 100% 0, 100% 100%);
 }
 
 .messages-turn-boundary::after {
   left: 50%;
   right: 0;
-  background: linear-gradient(90deg, rgba(0, 0, 0, 0.42) 0%, rgba(0, 0, 0, 0.12) 100%);
+  background: linear-gradient(90deg, var(--border-strong) 0%, transparent 100%);
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--border-strong) 86%, transparent) 0%,
+    color-mix(in srgb, var(--border-strong) 26%, transparent) 100%
+  );
   clip-path: polygon(0 0, 100% 50%, 0 100%);
 }
 
@@ -90,7 +101,8 @@
   align-items: center;
   padding: 0 10px;
   background: var(--surface-messages);
-  color: #111;
+  color: var(--text-stronger);
+  color: color-mix(in srgb, var(--text-stronger) 92%, var(--text-strong));
   font-weight: 600;
   line-height: 1.2;
   z-index: 1;
@@ -103,7 +115,8 @@
 }
 
 .messages-turn-boundary-icon {
-  color: #111;
+  color: var(--text-stronger);
+  color: color-mix(in srgb, var(--text-stronger) 88%, var(--text-muted));
   opacity: 0.9;
 }
 
@@ -119,7 +132,8 @@
   line-height: 1.2;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  color: #111;
+  color: var(--text-strong);
+  color: color-mix(in srgb, var(--text-strong) 82%, var(--text-muted));
   z-index: 1;
 }
 
@@ -128,7 +142,8 @@
 }
 
 .messages-reasoning-boundary .messages-turn-boundary-label {
-  color: #111;
+  color: var(--text-strong);
+  color: color-mix(in srgb, var(--status-info, #3b82f6) 68%, var(--text-strong));
 }
 
 .messages-final-boundary {
@@ -136,7 +151,8 @@
 }
 
 .messages-final-boundary .messages-turn-boundary-label {
-  color: #111;
+  color: var(--text-strong);
+  color: color-mix(in srgb, var(--status-success, #22c55e) 64%, var(--text-strong));
 }
 
 .main .messages {

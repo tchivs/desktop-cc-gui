@@ -246,6 +246,58 @@ describe("useQueuedSend", () => {
     expect(options.sendUserMessage).toHaveBeenCalledWith("After review", []);
   });
 
+  it("keeps /review-code as plain text and does not route to review handler", async () => {
+    const options = makeOptions();
+    const { result } = renderHook((props) => useQueuedSend(props), {
+      initialProps: options,
+    });
+
+    await act(async () => {
+      await result.current.handleSend("/review-code run full check", ["img-1"]);
+    });
+
+    expect(options.startReview).not.toHaveBeenCalled();
+    expect(options.sendUserMessage).toHaveBeenCalledWith(
+      "/review-code run full check",
+      ["img-1"],
+    );
+  });
+
+  it("keeps /review-like custom commands as plain text", async () => {
+    const options = makeOptions();
+    const { result } = renderHook((props) => useQueuedSend(props), {
+      initialProps: options,
+    });
+    const cases = [
+      "/review:custom run",
+      "/review_custom run",
+      "/review.custom run",
+    ];
+
+    await act(async () => {
+      for (const text of cases) {
+        await result.current.handleSend(text, ["img-1"]);
+      }
+    });
+
+    expect(options.startReview).not.toHaveBeenCalled();
+    expect(options.sendUserMessage).toHaveBeenNthCalledWith(
+      1,
+      "/review:custom run",
+      ["img-1"],
+    );
+    expect(options.sendUserMessage).toHaveBeenNthCalledWith(
+      2,
+      "/review_custom run",
+      ["img-1"],
+    );
+    expect(options.sendUserMessage).toHaveBeenNthCalledWith(
+      3,
+      "/review.custom run",
+      ["img-1"],
+    );
+  });
+
   it("starts a new thread for /new and sends the remaining text there", async () => {
     const startThreadForWorkspace = vi.fn().mockResolvedValue("thread-2");
     const sendUserMessageToThread = vi.fn().mockResolvedValue(undefined);

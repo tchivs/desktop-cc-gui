@@ -89,6 +89,22 @@ type SlashCommandKind =
 const MODE_QUERY_DENYLIST =
   /(区别|差别|不同|怎么|如何|为什么|为何|影响|不影响|约束|规则|行为|能力|planfirst|agents\.?md)/i;
 
+function readSlashCommandToken(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("/")) {
+    return null;
+  }
+  const withoutSlash = trimmed.slice(1);
+  if (!withoutSlash) {
+    return null;
+  }
+  const firstToken = withoutSlash.split(/\s+/, 1)[0]?.trim();
+  if (!firstToken) {
+    return null;
+  }
+  return firstToken.toLowerCase();
+}
+
 function isImplicitModeQuery(text: string): boolean {
   const trimmed = text.trim();
   if (!trimmed || trimmed.length > 64) {
@@ -112,58 +128,59 @@ function isImplicitModeQuery(text: string): boolean {
 }
 
 function parseSlashCommand(text: string): SlashCommandKind | null {
-  if (/^\/fork\b/i.test(text)) {
+  const commandToken = readSlashCommandToken(text);
+  if (commandToken === "fork") {
     return "fork";
   }
-  if (/^\/fast\b/i.test(text)) {
+  if (commandToken === "fast") {
     return "fast";
   }
-  if (/^\/(?:clear|reset)\b/i.test(text)) {
+  if (commandToken === "clear" || commandToken === "reset") {
     return "clear";
   }
-  if (/^\/mcp\b/i.test(text)) {
+  if (commandToken === "mcp") {
     return "mcp";
   }
-  if (/^\/review\b/i.test(text)) {
+  if (commandToken === "review") {
     return "review";
   }
-  if (/^\/new\b/i.test(text)) {
+  if (commandToken === "new") {
     return "new";
   }
-  if (/^\/resume\b/i.test(text)) {
+  if (commandToken === "resume") {
     return "resume";
   }
-  if (/^\/spec-root\b/i.test(text)) {
+  if (commandToken === "spec-root") {
     return "specRoot";
   }
-  if (/^\/status\b/i.test(text)) {
+  if (commandToken === "status") {
     return "status";
   }
-  if (/^\/context\b/i.test(text)) {
+  if (commandToken === "context") {
     return "context";
   }
-  if (/^\/export\b/i.test(text)) {
+  if (commandToken === "export") {
     return "export";
   }
-  if (/^\/import\b/i.test(text)) {
+  if (commandToken === "import") {
     return "import";
   }
-  if (/^\/lsp\b/i.test(text)) {
+  if (commandToken === "lsp") {
     return "lsp";
   }
-  if (/^\/share\b/i.test(text)) {
+  if (commandToken === "share") {
     return "share";
   }
-  if (/^\/plan\b/i.test(text)) {
+  if (commandToken === "plan") {
     return "plan";
   }
-  if (/^\/default\b/i.test(text)) {
+  if (commandToken === "default") {
     return "defaultMode";
   }
-  if (/^\/code\b/i.test(text)) {
+  if (commandToken === "code") {
     return "code";
   }
-  if (/^\/mode\b/i.test(text)) {
+  if (commandToken === "mode") {
     return "mode";
   }
   return null;

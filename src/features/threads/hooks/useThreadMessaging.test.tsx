@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversationItem, WorkspaceInfo } from "../../../types";
 import { useThreadMessaging } from "./useThreadMessaging";
 import {
+  engineInterruptTurn,
   engineInterrupt,
   engineSendMessage,
   getGitLog,
@@ -15,6 +16,7 @@ import {
   interruptTurn,
   listGitBranches,
   listExternalSpecTree,
+  listGeminiSessions,
   listMcpServerStatus,
   sendUserMessage,
   startReview as startReviewService,
@@ -43,7 +45,9 @@ vi.mock("../../../services/tauri", () => ({
   listExternalSpecTree: vi.fn(),
   listGitBranches: vi.fn(),
   getGitLog: vi.fn(),
+  listGeminiSessions: vi.fn(),
   engineSendMessage: vi.fn(),
+  engineInterruptTurn: vi.fn(),
   engineInterrupt: vi.fn(),
 }));
 
@@ -96,6 +100,7 @@ describe("useThreadMessaging", () => {
         { name: "release/1.0", lastCommit: 1500 },
       ],
     });
+    vi.mocked(listGeminiSessions).mockResolvedValue([]);
     vi.mocked(getGitLog).mockResolvedValue({
       total: 2,
       ahead: 0,
@@ -116,6 +121,7 @@ describe("useThreadMessaging", () => {
       output: "Imported session: ses_test",
     });
     vi.mocked(engineInterrupt).mockResolvedValue();
+    vi.mocked(engineInterruptTurn).mockResolvedValue();
     vi.mocked(interruptTurn).mockResolvedValue({});
     vi.mocked(writeClientStoreValue).mockImplementation(() => undefined);
   });
@@ -598,6 +604,114 @@ describe("useThreadMessaging", () => {
     );
   });
 
+  it("reuses discovered gemini session id for follow-up sends on pending thread", async () => {
+    vi.mocked(engineSendMessage)
+      .mockResolvedValueOnce({
+        result: { turn: { id: "turn-g1" } },
+      })
+      .mockResolvedValueOnce({
+        result: { turn: { id: "turn-g2" } },
+      });
+    vi.mocked(listGeminiSessions).mockResolvedValueOnce([
+      {
+        sessionId: "gem-session-xyz",
+        updatedAt: Date.now(),
+      },
+    ]);
+    const { result } = makeHook("gemini", {
+      activeThreadId: "gemini-pending-abc",
+      ensuredThreadId: "gemini-pending-abc",
+    });
+
+    await act(async () => {
+      await result.current.sendUserMessageToThread(
+        workspace,
+        "gemini-pending-abc",
+        "hello gemini",
+      );
+    });
+
+    await act(async () => {
+      await result.current.sendUserMessageToThread(
+        workspace,
+        "gemini-pending-abc",
+        "follow up",
+      );
+    });
+
+    expect(engineSendMessage).toHaveBeenNthCalledWith(
+      1,
+      "ws-1",
+      expect.objectContaining({
+        engine: "gemini",
+        continueSession: false,
+        sessionId: null,
+        threadId: "gemini-pending-abc",
+      }),
+    );
+    expect(engineSendMessage).toHaveBeenNthCalledWith(
+      2,
+      "ws-1",
+      expect.objectContaining({
+        engine: "gemini",
+        continueSession: true,
+        sessionId: "gem-session-xyz",
+        threadId: "gemini-pending-abc",
+      }),
+    );
+  });
+
+  it("does not bind gemini pending thread when session fallback is ambiguous", async () => {
+    vi.mocked(engineSendMessage)
+      .mockResolvedValueOnce({
+        result: { turn: { id: "turn-g1" } },
+      })
+      .mockResolvedValueOnce({
+        result: { turn: { id: "turn-g2" } },
+      });
+    vi.mocked(listGeminiSessions).mockResolvedValueOnce([
+      {
+        sessionId: "gem-session-a",
+        updatedAt: Date.now(),
+      },
+      {
+        sessionId: "gem-session-b",
+        updatedAt: Date.now(),
+      },
+    ]);
+    const { result } = makeHook("gemini", {
+      activeThreadId: "gemini-pending-ambiguous",
+      ensuredThreadId: "gemini-pending-ambiguous",
+    });
+
+    await act(async () => {
+      await result.current.sendUserMessageToThread(
+        workspace,
+        "gemini-pending-ambiguous",
+        "hello gemini",
+      );
+    });
+
+    await act(async () => {
+      await result.current.sendUserMessageToThread(
+        workspace,
+        "gemini-pending-ambiguous",
+        "follow up",
+      );
+    });
+
+    expect(engineSendMessage).toHaveBeenNthCalledWith(
+      2,
+      "ws-1",
+      expect.objectContaining({
+        engine: "gemini",
+        continueSession: false,
+        sessionId: null,
+        threadId: "gemini-pending-ambiguous",
+      }),
+    );
+  });
+
   it("does not treat thread id as claude session id fallback", async () => {
     vi.mocked(engineSendMessage)
       .mockResolvedValueOnce({
@@ -756,6 +870,23 @@ describe("useThreadMessaging", () => {
       expect(startReviewService).not.toHaveBeenCalled();
       expect(result.current.reviewPrompt).toBeNull();
     });
+  });
+
+  it("ignores /review-like custom commands in review entrypoint", async () => {
+    const { result } = makeHook("codex");
+
+    await act(async () => {
+      await result.current.startReview("/review-code run full check");
+      await result.current.startReview("/review:custom run");
+      await result.current.startReview("/review_custom run");
+      await result.current.startReview("/review.custom run");
+    });
+
+    expect(result.current.reviewPrompt).toBeNull();
+    expect(listGitBranches).not.toHaveBeenCalled();
+    expect(getGitLog).not.toHaveBeenCalled();
+    expect(startReviewService).not.toHaveBeenCalled();
+    expect(engineSendMessage).not.toHaveBeenCalled();
   });
 
   it("rebinds /review to a codex thread when the active thread is claude", async () => {
@@ -980,7 +1111,44 @@ describe("useThreadMessaging", () => {
       await result.current.interruptTurn();
     });
 
+    expect(engineInterruptTurn).toHaveBeenCalledWith("ws-1", "turn-9", "opencode");
+    expect(engineInterrupt).not.toHaveBeenCalled();
+    expect(interruptTurn).not.toHaveBeenCalled();
+  });
+
+  it("falls back to workspace interrupt when turn-scoped interrupt rpc is unavailable", async () => {
+    vi.mocked(engineInterruptTurn).mockRejectedValue(
+      new Error("unknown method: engine_interrupt_turn"),
+    );
+    const { result } = makeHook("codex", {
+      activeThreadId: "opencode:session-1",
+      ensuredThreadId: "opencode:session-1",
+      activeTurnIdByThread: { "opencode:session-1": "turn-9" },
+    });
+
+    await act(async () => {
+      await result.current.interruptTurn();
+    });
+
+    expect(engineInterruptTurn).toHaveBeenCalledWith("ws-1", "turn-9", "opencode");
     expect(engineInterrupt).toHaveBeenCalledWith("ws-1");
+    expect(interruptTurn).not.toHaveBeenCalled();
+  });
+
+  it("interrupt on cli-managed engine queues pending interrupt when turn id is not ready", async () => {
+    const { result, pendingInterruptsRef } = makeHook("claude", {
+      activeThreadId: "claude:session-1",
+      ensuredThreadId: "claude:session-1",
+      activeTurnIdByThread: {},
+    });
+
+    await act(async () => {
+      await result.current.interruptTurn();
+    });
+
+    expect(pendingInterruptsRef.current.has("claude:session-1")).toBe(true);
+    expect(engineInterruptTurn).not.toHaveBeenCalled();
+    expect(engineInterrupt).not.toHaveBeenCalled();
     expect(interruptTurn).not.toHaveBeenCalled();
   });
 

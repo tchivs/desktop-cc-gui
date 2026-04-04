@@ -46,6 +46,7 @@ describe("WorktreeSection", () => {
         getThreadTime={() => null}
         isThreadPinned={() => false}
         isThreadAutoNaming={() => false}
+        onToggleThreadPin={vi.fn()}
         getPinTimestamp={() => null}
         onSelectWorkspace={vi.fn()}
         onConnectWorkspace={vi.fn()}
@@ -95,6 +96,7 @@ describe("WorktreeSection", () => {
         getThreadTime={() => null}
         isThreadPinned={() => false}
         isThreadAutoNaming={() => false}
+        onToggleThreadPin={vi.fn()}
         getPinTimestamp={() => null}
         onSelectWorkspace={vi.fn()}
         onConnectWorkspace={vi.fn()}
@@ -149,6 +151,7 @@ describe("WorktreeSection", () => {
         getThreadTime={() => null}
         isThreadPinned={() => false}
         isThreadAutoNaming={() => false}
+        onToggleThreadPin={vi.fn()}
         getPinTimestamp={() => null}
         onSelectWorkspace={onSelectWorkspace}
         onConnectWorkspace={vi.fn()}

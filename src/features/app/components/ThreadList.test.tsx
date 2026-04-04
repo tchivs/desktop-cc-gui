@@ -16,6 +16,8 @@ vi.mock("react-i18next", () => ({
         "threads.searchOlder": "Search older...",
         "threads.loadOlder": "Load older...",
         "threads.autoNaming": "Auto naming...",
+        "threads.pin": "Pin",
+        "threads.unpin": "Unpin",
         "threads.deleteThreadTitle": "Delete conversation",
         "threads.deleteThreadMessage": "Are you sure you want to delete this thread?",
         "threads.deleteThreadHint": "This cannot be undone.",
@@ -98,6 +100,34 @@ describe("ThreadList", () => {
       "thread-1",
       true,
     );
+  });
+
+  it("shows pin toggle and allows pinning without selecting the row", () => {
+    const onToggleThreadPin = vi.fn();
+    const onSelectThread = vi.fn();
+
+    const { container } = render(
+      <ThreadList
+        {...baseProps}
+        onToggleThreadPin={onToggleThreadPin}
+        onSelectThread={onSelectThread}
+      />,
+    );
+
+    const row = container.querySelector(".thread-row");
+    expect(row).toBeTruthy();
+    if (!row) {
+      throw new Error("Missing thread row");
+    }
+    const pinButton = row.querySelector(".thread-pin-toggle") as HTMLButtonElement | null;
+    expect(pinButton).toBeTruthy();
+    if (!pinButton) {
+      throw new Error("Missing pin toggle");
+    }
+
+    fireEvent.click(pinButton);
+    expect(onToggleThreadPin).toHaveBeenCalledWith("ws-1", "thread-1");
+    expect(onSelectThread).not.toHaveBeenCalled();
   });
 
   it("shows the more button and toggles expanded", () => {

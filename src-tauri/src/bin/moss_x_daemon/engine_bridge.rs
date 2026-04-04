@@ -17,6 +17,8 @@ pub mod events;
 pub mod gemini;
 #[path = "../../engine/gemini_history.rs"]
 pub mod gemini_history;
+#[path = "../../engine/gemini_proxy_guard.rs"]
+pub(crate) mod gemini_proxy_guard;
 #[path = "../../engine/manager.rs"]
 pub mod manager;
 #[path = "../../engine/opencode.rs"]

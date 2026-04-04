@@ -37,6 +37,7 @@ type PinnedThreadListProps = {
   getThreadTime: (thread: ThreadSummary) => string | null;
   isThreadPinned: (workspaceId: string, threadId: string) => boolean;
   isThreadAutoNaming: (workspaceId: string, threadId: string) => boolean;
+  onToggleThreadPin?: (workspaceId: string, threadId: string) => void;
   onSelectThread: (workspaceId: string, threadId: string) => void;
   onShowThreadMenu: (
     event: MouseEvent,
@@ -61,6 +62,7 @@ export function PinnedThreadList({
   getThreadTime,
   isThreadPinned,
   isThreadAutoNaming,
+  onToggleThreadPin,
   onSelectThread,
   onShowThreadMenu,
   deleteConfirmThreadId = null,
@@ -122,7 +124,9 @@ export function PinnedThreadList({
                     workspaceId === activeWorkspaceId && thread.id === activeThreadId
                       ? "active"
                       : ""
-                  }${isDeleteConfirmOpen ? " has-delete-confirm" : ""}`}
+                  }${isDeleteConfirmOpen ? " has-delete-confirm" : ""}${
+                    canPin ? " has-pin-toggle" : ""
+                  }`}
                   style={indentStyle}
                   onClick={() => onSelectThread(workspaceId, thread.id)}
                   onContextMenu={(event) =>
@@ -136,7 +140,25 @@ export function PinnedThreadList({
                   }}
                 >
                   <span className={`thread-status ${statusClass}`} aria-hidden />
-                  {isPinned && <span className="thread-pin-icon" aria-label="Pinned" />}
+                  {canPin && onToggleThreadPin && (
+                    <span
+                      className={`thread-pin-toggle${isPinned ? " is-pinned" : ""}`}
+                      role="button"
+                      aria-label={isPinned ? t("threads.unpin") : t("threads.pin")}
+                      title={isPinned ? t("threads.unpin") : t("threads.pin")}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        onToggleThreadPin(workspaceId, thread.id);
+                      }}
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                      }}
+                    >
+                      <span className="thread-pin-toggle-icon" aria-hidden />
+                    </span>
+                  )}
                   <span
                     className={`thread-engine-badge thread-engine-${engineSource}${
                       isProcessing ? " is-processing" : ""

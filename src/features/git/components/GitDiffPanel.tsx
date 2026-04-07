@@ -1,5 +1,5 @@
 import type { GitHubIssue, GitHubPullRequest, GitLogEntry } from "../../../types";
-import type { CommitMessageLanguage } from "../../../services/tauri";
+import type { CommitMessageEngine, CommitMessageLanguage } from "../../../services/tauri";
 import type {
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
@@ -36,6 +36,7 @@ import { matchesShortcut } from "../../../utils/shortcuts";
 import { formatRelativeTime } from "../../../utils/time";
 import type { PanelTabId } from "../../layout/components/PanelTabs";
 import FileIcon from "../../../components/FileIcon";
+import { CommitMessageEngineIcon } from "./CommitMessageEngineIcon";
 import { GitDiffViewer } from "./GitDiffViewer";
 
 type GitDiffPanelProps = {
@@ -128,7 +129,10 @@ type GitDiffPanelProps = {
   commitMessageLoading?: boolean;
   commitMessageError?: string | null;
   onCommitMessageChange?: (value: string) => void;
-  onGenerateCommitMessage?: (language?: CommitMessageLanguage) => void | Promise<void>;
+  onGenerateCommitMessage?: (
+    language?: CommitMessageLanguage,
+    engine?: CommitMessageEngine,
+  ) => void | Promise<void>;
   // Git operations
   onCommit?: () => void | Promise<void>;
   onCommitAndPush?: () => void | Promise<void>;
@@ -151,9 +155,12 @@ type ModeMenuLayout = {
 };
 
 function splitPath(path: string) {
-  const parts = path.split("/");
+  const parts = path.replace(/\\/g, "/").split("/").filter(Boolean);
+  if (parts.length === 0) {
+    return { name: "", dir: "" };
+  }
   if (parts.length === 1) {
-    return { name: path, dir: "" };
+    return { name: parts[0] ?? "", dir: "" };
   }
   return { name: parts[parts.length - 1], dir: parts.slice(0, -1).join("/") };
 }
@@ -712,7 +719,10 @@ export function buildDiffTree(
     files: [],
   };
   for (const file of files) {
-    const parts = file.path.split("/");
+    const parts = file.path.replace(/\\/g, "/").split("/").filter(Boolean);
+    if (parts.length === 0) {
+      continue;
+    }
     let node = root;
     for (let index = 0; index < parts.length - 1; index += 1) {
       const segment = parts[index] ?? "";
@@ -1368,6 +1378,7 @@ export function GitDiffPanel({
   const [isPreviewModalMaximized, setIsPreviewModalMaximized] = useState(false);
   const [previewHeaderControlsTarget, setPreviewHeaderControlsTarget] = useState<HTMLDivElement | null>(null);
   const [isModeMenuOpen, setIsModeMenuOpen] = useState(false);
+  const [commitMessageMenuEngine, setCommitMessageMenuEngine] = useState<CommitMessageEngine>("claude");
   const [isGitRootPanelOpen, setIsGitRootPanelOpen] = useState(
     () =>
       isMissingRepo(error) ||
@@ -1989,9 +2000,7 @@ export function GitDiffPanel({
     <Upload size={12} aria-hidden />
   );
   const showCommitMessageLanguageMenu = useCallback(
-    async (event: ReactMouseEvent<HTMLButtonElement>) => {
-      event.preventDefault();
-      event.stopPropagation();
+    async (engine: CommitMessageEngine, position: LogicalPosition) => {
       if (!onGenerateCommitMessage || commitMessageLoading || commitLoading || !canGenerateCommitMessage) {
         return;
       }
@@ -1999,22 +2008,60 @@ export function GitDiffPanel({
         await MenuItem.new({
           text: t("git.generateCommitMessageChinese"),
           action: async () => {
-            await onGenerateCommitMessage("zh");
+            setCommitMessageMenuEngine(engine);
+            await onGenerateCommitMessage("zh", engine);
           },
         }),
         await MenuItem.new({
           text: t("git.generateCommitMessageEnglish"),
           action: async () => {
-            await onGenerateCommitMessage("en");
+            setCommitMessageMenuEngine(engine);
+            await onGenerateCommitMessage("en", engine);
           },
         }),
       ];
       const menu = await Menu.new({ items });
       const window = getCurrentWindow();
-      const position = new LogicalPosition(event.clientX, event.clientY);
       await menu.popup(position, window);
     },
     [canGenerateCommitMessage, commitLoading, commitMessageLoading, onGenerateCommitMessage, t],
+  );
+  const showCommitMessageEngineMenu = useCallback(
+    async (event: ReactMouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!onGenerateCommitMessage || commitMessageLoading || commitLoading || !canGenerateCommitMessage) {
+        return;
+      }
+      const position = new LogicalPosition(event.clientX, event.clientY);
+      const engineItems: Array<{ engine: CommitMessageEngine; label: string }> = [
+        { engine: "codex", label: t("git.generateCommitMessageEngineCodex") },
+        { engine: "claude", label: t("git.generateCommitMessageEngineClaude") },
+        { engine: "gemini", label: t("git.generateCommitMessageEngineGemini") },
+        { engine: "opencode", label: t("git.generateCommitMessageEngineOpenCode") },
+      ];
+      const items = await Promise.all(
+        engineItems.map(async ({ engine, label }) =>
+          MenuItem.new({
+            text: label,
+            action: async () => {
+              await showCommitMessageLanguageMenu(engine, position);
+            },
+          }),
+        ),
+      );
+      const menu = await Menu.new({ items });
+      const window = getCurrentWindow();
+      await menu.popup(position, window);
+    },
+    [
+      canGenerateCommitMessage,
+      commitLoading,
+      commitMessageLoading,
+      onGenerateCommitMessage,
+      showCommitMessageLanguageMenu,
+      t,
+    ],
   );
   return (
     <aside className="diff-panel" ref={panelRef}>
@@ -2317,9 +2364,9 @@ export function GitDiffPanel({
                 />
                 <button
                   type="button"
-                  className="commit-message-generate-button"
+                  className={`commit-message-generate-button${commitMessageLoading ? " commit-message-generate-button--loading" : ""}`}
                   onClick={(event) => {
-                    void showCommitMessageLanguageMenu(event);
+                    void showCommitMessageEngineMenu(event);
                   }}
                   disabled={commitMessageLoading || !canGenerateCommitMessage}
                   aria-haspopup="menu"
@@ -2330,49 +2377,11 @@ export function GitDiffPanel({
                   }
                   aria-label="Generate commit message"
                 >
-                  {commitMessageLoading ? (
-                    <svg
-                      className="commit-message-loader"
-                      width={14}
-                      height={14}
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth={2}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden
-                    >
-                      <path d="M12 2v4" />
-                      <path d="m16.2 7.8 2.9-2.9" />
-                      <path d="M18 12h4" />
-                      <path d="m16.2 16.2 2.9 2.9" />
-                      <path d="M12 18v4" />
-                      <path d="m4.9 19.1 2.9-2.9" />
-                      <path d="M2 12h4" />
-                      <path d="m4.9 4.9 2.9 2.9" />
-                    </svg>
-                  ) : (
-                    <svg
-                      width={14}
-                      height={14}
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                      stroke="currentColor"
-                      strokeWidth={2}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden
-                    >
-                      <path
-                        d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"
-                        stroke="none"
-                      />
-                      <path d="M20 2v4" fill="none" />
-                      <path d="M22 4h-4" fill="none" />
-                      <circle cx="4" cy="20" r="2" fill="none" />
-                    </svg>
-                  )}
+                  <CommitMessageEngineIcon
+                    engine={commitMessageMenuEngine}
+                    size={14}
+                    className={`commit-message-engine-icon${commitMessageLoading ? " commit-message-engine-icon--spinning" : ""}`}
+                  />
                 </button>
               </div>
               {commitMessageError && (

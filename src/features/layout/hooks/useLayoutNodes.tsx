@@ -392,7 +392,10 @@ type LayoutNodesOptions = {
   commitMessageLoading: boolean;
   commitMessageError: string | null;
   onCommitMessageChange: (value: string) => void;
-  onGenerateCommitMessage: (language?: "zh" | "en") => void | Promise<void>;
+  onGenerateCommitMessage: (
+    language?: "zh" | "en",
+    engine?: "codex" | "claude" | "gemini" | "opencode",
+  ) => void | Promise<void>;
   onCommit?: () => void | Promise<void>;
   onCommitAndPush?: () => void | Promise<void>;
   onCommitAndSync?: () => void | Promise<void>;

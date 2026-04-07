@@ -1483,6 +1483,10 @@ const zhPart1 = {
     generateCommitMessage: "生成提交信息",
     generateCommitMessageChinese: "生成中文提交信息",
     generateCommitMessageEnglish: "生成英文提交信息",
+    generateCommitMessageEngineCodex: "使用 Codex 引擎",
+    generateCommitMessageEngineClaude: "使用 Claude 引擎",
+    generateCommitMessageEngineGemini: "使用 Gemini 引擎",
+    generateCommitMessageEngineOpenCode: "使用 OpenCode 引擎",
     commitMessageRequiresCodex: "AI 生成提交信息需要 Codex CLI，请先安装: npm install -g @openai/codex",
     // Git 日志和状态
     noMessage: "无消息",

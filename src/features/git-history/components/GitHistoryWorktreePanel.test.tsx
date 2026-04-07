@@ -5,7 +5,7 @@ import { GitHistoryWorktreePanel } from "./GitHistoryWorktreePanel";
 
 const mockGetGitStatus = vi.fn<(workspaceId: string) => Promise<unknown>>();
 const mockGenerateCommitMessage = vi.fn<
-  (workspaceId: string, language?: "zh" | "en") => Promise<string>
+  (workspaceId: string, language?: "zh" | "en", engine?: "codex" | "claude" | "gemini" | "opencode") => Promise<string>
 >();
 const mockStageGitFile = vi.fn<(workspaceId: string, path: string) => Promise<void>>();
 const mockMenuPopup = vi.fn<
@@ -32,6 +32,10 @@ vi.mock("react-i18next", () => ({
         "git.generateCommitMessage": "Generate commit message",
         "git.generateCommitMessageChinese": "Generate Chinese commit message",
         "git.generateCommitMessageEnglish": "Generate English commit message",
+        "git.generateCommitMessageEngineCodex": "Use Codex engine",
+        "git.generateCommitMessageEngineClaude": "Use Claude engine",
+        "git.generateCommitMessageEngineGemini": "Use Gemini engine",
+        "git.generateCommitMessageEngineOpenCode": "Use OpenCode engine",
       };
       return translations[key] ?? key;
     },
@@ -44,8 +48,11 @@ vi.mock("react-i18next", () => ({
 
 vi.mock("../../../services/tauri", () => ({
   commitGit: vi.fn(async () => undefined),
-  generateCommitMessage: (workspaceId: string, language?: "zh" | "en") =>
-    mockGenerateCommitMessage(workspaceId, language),
+  generateCommitMessageWithEngine: (
+    workspaceId: string,
+    language?: "zh" | "en",
+    engine?: "codex" | "claude" | "gemini" | "opencode",
+  ) => mockGenerateCommitMessage(workspaceId, language, engine),
   getGitStatus: (workspaceId: string) => mockGetGitStatus(workspaceId),
   revertGitAll: vi.fn(async () => undefined),
   revertGitFile: vi.fn(async () => undefined),
@@ -131,11 +138,36 @@ describe("GitHistoryWorktreePanel", () => {
     });
   });
 
-  it("generates English commit message after menu selection", async () => {
-    mockMenuPopup.mockImplementationOnce(async (items) => {
-      const englishItem = items.find((item) => item.text === "Generate English commit message");
-      await englishItem?.action?.();
+  it("renders Windows-style file paths with correct leaf names", async () => {
+    mockGetGitStatus.mockResolvedValue({
+      branchName: "main",
+      files: [
+        { path: "src\\staged.ts", status: "M", additions: 2, deletions: 1 },
+        { path: "src\\feature\\unstaged.ts", status: "M", additions: 3, deletions: 1 },
+      ],
+      stagedFiles: [{ path: "src\\staged.ts", status: "M", additions: 2, deletions: 1 }],
+      unstagedFiles: [{ path: "src\\feature\\unstaged.ts", status: "M", additions: 3, deletions: 1 }],
+      totalAdditions: 5,
+      totalDeletions: 2,
     });
+
+    render(<GitHistoryWorktreePanel workspaceId="w1" listView="tree" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("unstaged.ts", { selector: "strong" })).toBeTruthy();
+    });
+  });
+
+  it("generates English commit message after menu selection", async () => {
+    mockMenuPopup
+      .mockImplementationOnce(async (items) => {
+        const codexItem = items.find((item) => item.text === "Use Codex engine");
+        await codexItem?.action?.();
+      })
+      .mockImplementationOnce(async (items) => {
+        const englishItem = items.find((item) => item.text === "Generate English commit message");
+        await englishItem?.action?.();
+      });
 
     render(<GitHistoryWorktreePanel workspaceId="w1" listView="tree" />);
 
@@ -143,8 +175,18 @@ describe("GitHistoryWorktreePanel", () => {
     fireEvent.click(generateButton);
 
     await waitFor(() => {
-      expect(mockGenerateCommitMessage).toHaveBeenCalledWith("w1", "en");
+      expect(mockGenerateCommitMessage).toHaveBeenCalledWith("w1", "en", "codex");
     });
+  });
+
+  it("renders engine icon in generate button", async () => {
+    render(<GitHistoryWorktreePanel workspaceId="w1" listView="tree" />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Generate commit message" })).toBeTruthy();
+    });
+
+    expect(document.querySelector(".git-history-worktree-engine-icon")).toBeTruthy();
   });
 
   it("hides empty sections when there are no files in that section", async () => {

@@ -225,10 +225,9 @@ export function usePromptEnhancer({
         setEnhancedPrompt(resolveErrorMessage(error));
         setCanUseEnhancedPrompt(false);
       } finally {
-        if (activeRequestIdRef.current !== requestId) {
-          return;
+        if (activeRequestIdRef.current === requestId) {
+          setIsEnhancing(false);
         }
-        setIsEnhancing(false);
       }
     })();
   }, [

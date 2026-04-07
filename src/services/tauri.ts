@@ -1964,6 +1964,7 @@ export async function deleteOpenCodeSession(
 }
 
 export type CommitMessageLanguage = "zh" | "en";
+export type CommitMessageEngine = EngineType;
 
 export async function getCommitMessagePrompt(
   workspaceId: string,
@@ -1977,6 +1978,22 @@ export async function generateCommitMessage(
   language: CommitMessageLanguage = "zh",
 ): Promise<string> {
   return invoke("generate_commit_message", { workspaceId, language });
+}
+
+export async function generateCommitMessageWithEngine(
+  workspaceId: string,
+  language: CommitMessageLanguage = "zh",
+  engine: CommitMessageEngine = "codex",
+): Promise<string> {
+  if (engine === "codex") {
+    return generateCommitMessage(workspaceId, language);
+  }
+  const prompt = await getCommitMessagePrompt(workspaceId, language);
+  const response = await engineSendMessageSync(workspaceId, {
+    text: prompt,
+    engine,
+  });
+  return response.text;
 }
 
 export async function listThreadTitles(

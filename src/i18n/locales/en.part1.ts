@@ -1505,6 +1505,10 @@ const enPart1 = {
     generateCommitMessage: "Generate commit message",
     generateCommitMessageChinese: "Generate Chinese commit message",
     generateCommitMessageEnglish: "Generate English commit message",
+    generateCommitMessageEngineCodex: "Use Codex engine",
+    generateCommitMessageEngineClaude: "Use Claude engine",
+    generateCommitMessageEngineGemini: "Use Gemini engine",
+    generateCommitMessageEngineOpenCode: "Use OpenCode engine",
     commitMessageRequiresCodex: "AI commit message generation requires the Codex CLI. Install it with: npm install -g @openai/codex",
     // Git log and status
     noMessage: "No message",

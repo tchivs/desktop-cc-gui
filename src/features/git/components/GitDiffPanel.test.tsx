@@ -23,6 +23,10 @@ vi.mock("react-i18next", () => ({
         "git.generateCommitMessage": "Generate commit message",
         "git.generateCommitMessageChinese": "Generate Chinese commit message",
         "git.generateCommitMessageEnglish": "Generate English commit message",
+        "git.generateCommitMessageEngineCodex": "Use Codex engine",
+        "git.generateCommitMessageEngineClaude": "Use Claude engine",
+        "git.generateCommitMessageEngineGemini": "Use Gemini engine",
+        "git.generateCommitMessageEngineOpenCode": "Use OpenCode engine",
         "git.listFlat": "Flat",
         "git.listTree": "Tree",
         "git.listView": "List view",
@@ -158,6 +162,21 @@ describe("GitDiffPanel", () => {
     expect(srcNode?.folders.has("git")).toBe(true);
   });
 
+  it("builds a nested tree from Windows-style file paths", () => {
+    const tree = buildDiffTree(
+      [
+        { path: "src\\app\\main.tsx", status: "M", additions: 1, deletions: 0 },
+        { path: "README.md", status: "M", additions: 1, deletions: 1 },
+      ],
+      "unstaged",
+    );
+
+    expect(tree.folders.has("src")).toBe(true);
+    const srcNode = tree.folders.get("src");
+    expect(srcNode?.folders.has("app")).toBe(true);
+    expect(tree.files.map((entry) => entry.path)).toEqual(["README.md"]);
+  });
+
   it("supports tree keyboard navigation and Enter-to-open", () => {
     const onSelectFile = vi.fn();
     render(
@@ -183,11 +202,16 @@ describe("GitDiffPanel", () => {
     expect(onSelectFile).toHaveBeenCalledWith("b.ts");
   });
 
-  it("opens language menu before generating commit message", async () => {
-    mockMenuPopup.mockImplementationOnce(async (items) => {
-      const englishItem = items.find((item) => item.text === "Generate English commit message");
-      await englishItem?.action?.();
-    });
+  it("opens engine menu then language menu before generating commit message", async () => {
+    mockMenuPopup
+      .mockImplementationOnce(async (items) => {
+        const codexItem = items.find((item) => item.text === "Use Codex engine");
+        await codexItem?.action?.();
+      })
+      .mockImplementationOnce(async (items) => {
+        const englishItem = items.find((item) => item.text === "Generate English commit message");
+        await englishItem?.action?.();
+      });
     const onGenerateCommitMessage = vi.fn();
 
     render(
@@ -202,8 +226,22 @@ describe("GitDiffPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Generate commit message" }));
 
     await waitFor(() => {
-      expect(onGenerateCommitMessage).toHaveBeenCalledWith("en");
+      expect(onGenerateCommitMessage).toHaveBeenCalledWith("en", "codex");
     });
+  });
+
+  it("shows spinning engine icon while generating commit message", () => {
+    render(
+      <GitDiffPanel
+        {...baseProps}
+        commitMessageLoading
+        onGenerateCommitMessage={vi.fn()}
+        unstagedFiles={[{ path: "file.txt", status: "M", additions: 1, deletions: 0 }]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Toggle commit section" }));
+    expect(document.querySelector(".commit-message-engine-icon--spinning")).toBeTruthy();
   });
 
   it("applies unified file-tree semantic classes", () => {

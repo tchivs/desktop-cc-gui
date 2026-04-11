@@ -219,17 +219,19 @@ impl ClaudeSession {
              to deliver user's answer"
         );
 
-        // Kill the current process
-        {
+        // Kill the current process (move child handle out of map first to avoid
+        // awaiting termination while holding the shared process lock).
+        let mut existing_child = {
             let mut active = self.active_processes.lock().await;
-            if let Some(mut child) = active.remove(turn_id) {
-                if let Err(error) = self.terminate_child_process(turn_id, &mut child).await {
-                    log::debug!(
-                        "[claude] Failed to terminate AskUserQuestion parent process (turn={}): {}",
-                        turn_id,
-                        error
-                    );
-                }
+            active.remove(turn_id)
+        };
+        if let Some(mut child) = existing_child.take() {
+            if let Err(error) = self.terminate_child_process(turn_id, &mut child).await {
+                log::debug!(
+                    "[claude] Failed to terminate AskUserQuestion parent process (turn={}): {}",
+                    turn_id,
+                    error
+                );
             }
         }
 
@@ -239,9 +241,13 @@ impl ClaudeSession {
         resume_params.continue_session = true;
         resume_params.session_id = Some(sid);
         resume_params.images = None;
+        if self.is_disposed() {
+            return Err("Claude session disposed; refusing AskUserQuestion resume spawn".to_string());
+        }
         let use_stream_json_input = Self::should_use_stream_json_input(&resume_params);
 
         let mut cmd = self.build_command(&resume_params, use_stream_json_input);
+        Self::configure_spawn_command(&mut cmd);
         match cmd.spawn() {
             Ok(mut new_child) => {
                 if use_stream_json_input {
@@ -336,9 +342,21 @@ impl ClaudeSession {
                 }
 
                 // Store new child for interruption
+                let mut spawned_child = Some(new_child);
                 {
                     let mut active = self.active_processes.lock().await;
-                    active.insert(turn_id.to_string(), new_child);
+                    if !self.is_disposed() {
+                        if let Some(child) = spawned_child.take() {
+                            active.insert(turn_id.to_string(), child);
+                        }
+                    }
+                }
+                if let Some(mut child) = spawned_child.take() {
+                    let _ = self.terminate_child_process(turn_id, &mut child).await;
+                    return Err(
+                        "Claude session disposed during AskUserQuestion resume; terminated pending child process"
+                            .to_string(),
+                    );
                 }
 
                 log::info!("Resumed Claude with user's answer");

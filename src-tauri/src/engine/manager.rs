@@ -191,7 +191,16 @@ impl EngineManager {
 
     /// Remove a Claude session
     pub async fn remove_claude_session(&self, workspace_id: &str) {
-        self.claude_manager.remove_session(workspace_id).await;
+        if let Some(session) = self.claude_manager.remove_session(workspace_id).await {
+            session.mark_disposed();
+            if let Err(error) = session.interrupt().await {
+                log::warn!(
+                    "[engine_manager] failed to interrupt claude session during remove (workspace={}): {}",
+                    workspace_id,
+                    error
+                );
+            }
+        }
     }
 
     // ==================== Codex Session Adapter Management ====================

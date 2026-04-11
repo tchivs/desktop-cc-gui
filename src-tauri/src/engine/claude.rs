@@ -72,6 +72,8 @@ pub struct ClaudeSession {
     active_processes: Mutex<HashMap<String, Child>>,
     /// Flag set by interrupt() so send_message() knows the process was killed intentionally
     interrupted: AtomicBool,
+    /// Disposal flag set when workspace/session is being torn down.
+    disposed: AtomicBool,
     /// Track tool names for completion events
     tool_name_by_id: StdMutex<HashMap<String, String>>,
     /// Track tool input buffers for streaming input_json_delta
@@ -138,6 +140,7 @@ impl ClaudeSession {
             custom_args: config.custom_args,
             active_processes: Mutex::new(HashMap::new()),
             interrupted: AtomicBool::new(false),
+            disposed: AtomicBool::new(false),
             tool_name_by_id: StdMutex::new(HashMap::new()),
             tool_input_by_id: StdMutex::new(HashMap::new()),
             tool_input_value_by_id: StdMutex::new(HashMap::new()),
@@ -159,6 +162,14 @@ impl ClaudeSession {
     /// Get current session ID
     pub async fn get_session_id(&self) -> Option<String> {
         self.session_id.read().await.clone()
+    }
+
+    fn is_disposed(&self) -> bool {
+        self.disposed.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn mark_disposed(&self) {
+        self.disposed.store(true, Ordering::SeqCst);
     }
 
     /// Emit a TurnError event to notify the frontend when an error occurs
@@ -333,6 +344,20 @@ impl ClaudeSession {
         params: SendMessageParams,
         turn_id: &str,
     ) -> Result<String, String> {
+        if self.is_disposed() {
+            let error_msg = "Claude session disposed; refusing to start new process".to_string();
+            self.emit_turn_event(
+                turn_id,
+                EngineEvent::TurnError {
+                    workspace_id: self.workspace_id.clone(),
+                    error: error_msg.clone(),
+                    code: None,
+                },
+            );
+            self.clear_turn_ephemeral_state(turn_id);
+            return Err(error_msg);
+        }
+
         // Reset cumulative text tracker for the new turn only.
         if let Ok(mut map) = self.last_emitted_text_by_turn.lock() {
             map.remove(turn_id);
@@ -456,9 +481,30 @@ impl ClaudeSession {
         };
 
         // Store child for interruption (per turn)
+        let mut spawned_child = Some(child);
         {
             let mut active = self.active_processes.lock().await;
-            active.insert(turn_id.to_string(), child);
+            if !self.is_disposed() {
+                if let Some(child) = spawned_child.take() {
+                    active.insert(turn_id.to_string(), child);
+                }
+            }
+        }
+        if let Some(mut child) = spawned_child.take() {
+            let _ = self.terminate_child_process(turn_id, &mut child).await;
+            let error_msg =
+                "Claude session disposed during startup; terminated pending child process"
+                    .to_string();
+            self.emit_turn_event(
+                turn_id,
+                EngineEvent::TurnError {
+                    workspace_id: self.workspace_id.clone(),
+                    error: error_msg.clone(),
+                    code: None,
+                },
+            );
+            self.clear_turn_ephemeral_state(turn_id);
+            return Err(error_msg);
         }
 
         // Emit session started event

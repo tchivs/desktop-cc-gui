@@ -30,18 +30,23 @@ export const PlanList = memo(function PlanList({
   }
 
   return (
-    <ol className="sp-plan-list">
-      {steps.map((step, index) => {
-        const statusForDisplay = resolvePlanStepStatusForDisplay(step.status, isProcessing);
-        return (
-          <li key={`${step.step}-${index}`} className={`sp-plan-item sp-plan-${statusForDisplay}`}>
-          <span className="sp-plan-status" aria-hidden>
-            {statusForDisplay === "completed" ? "✓" : statusForDisplay === "inProgress" ? "…" : "○"}
-          </span>
-          <span className="sp-plan-text">{step.step}</span>
-          </li>
-        );
-      })}
-    </ol>
+    <div className="sp-plan-panel">
+      {plan?.explanation ? (
+        <div className="sp-plan-explanation">{plan.explanation}</div>
+      ) : null}
+      <ol className="sp-plan-list">
+        {steps.map((step, index) => {
+          const statusForDisplay = resolvePlanStepStatusForDisplay(step.status, isProcessing);
+          return (
+            <li key={`${step.step}-${index}`} className={`sp-plan-item sp-plan-${statusForDisplay}`}>
+              <span className="sp-plan-status" aria-hidden>
+                {statusForDisplay === "completed" ? "✓" : statusForDisplay === "inProgress" ? "…" : "○"}
+              </span>
+              <span className="sp-plan-text">{step.step}</span>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
   );
 });

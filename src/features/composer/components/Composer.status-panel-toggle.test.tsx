@@ -120,7 +120,7 @@ function ComposerHarness({ selectedEngine }: { selectedEngine: EngineType }) {
 describe("Composer status panel toggle visibility", () => {
   it("shows status panel toggle on claude engine", () => {
     render(<ComposerHarness selectedEngine="claude" />);
-    expect(screen.getByTestId("status-panel")).not.toBeNull();
+    expect(screen.queryByTestId("status-panel")).toBeNull();
     expect(
       screen
         .getByTestId("chat-input-box-adapter")
@@ -130,7 +130,7 @@ describe("Composer status panel toggle visibility", () => {
 
   it("shows status panel toggle on codex engine", () => {
     render(<ComposerHarness selectedEngine="codex" />);
-    expect(screen.getByTestId("status-panel")).not.toBeNull();
+    expect(screen.queryByTestId("status-panel")).toBeNull();
     expect(
       screen
         .getByTestId("chat-input-box-adapter")
@@ -140,7 +140,7 @@ describe("Composer status panel toggle visibility", () => {
 
   it("shows status panel toggle on gemini engine", () => {
     render(<ComposerHarness selectedEngine="gemini" />);
-    expect(screen.getByTestId("status-panel")).not.toBeNull();
+    expect(screen.queryByTestId("status-panel")).toBeNull();
     expect(
       screen
         .getByTestId("chat-input-box-adapter")

@@ -646,6 +646,7 @@ export function useAppShellLayoutNodesSection(ctx: any) {
     isPlanMode,
     onOpenPlanPanel: openPlanPanel,
     onClosePlanPanel: closePlanPanel,
+    bottomStatusPanelExpanded: !isPlanPanelDismissed,
     debugEntries,
     debugOpen,
     terminalOpen,

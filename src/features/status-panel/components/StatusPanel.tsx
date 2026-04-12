@@ -22,6 +22,17 @@ interface StatusPanelProps {
   isPlanMode?: boolean;
   isCodexEngine?: boolean;
   onOpenDiffPath?: (path: string) => void;
+  variant?: "popover" | "dock";
+}
+
+function resolvePreferredTab(
+  variant: "popover" | "dock",
+  showPlanTab: boolean,
+): TabType | null {
+  if (variant === "dock") {
+    return showPlanTab ? "plan" : "todo";
+  }
+  return null;
 }
 
 export const StatusPanel = memo(function StatusPanel({
@@ -32,6 +43,7 @@ export const StatusPanel = memo(function StatusPanel({
   isPlanMode = false,
   isCodexEngine = false,
   onOpenDiffPath,
+  variant = "popover",
 }: StatusPanelProps) {
   const { t } = useTranslation();
   const {
@@ -48,13 +60,18 @@ export const StatusPanel = memo(function StatusPanel({
     totalDeletions,
   } = useStatusPanelData(items, { isCodexEngine });
 
-  const [openTab, setOpenTab] = useState<TabType | null>(null);
+  const showPlanTab = isPlanMode || Boolean(plan);
+  const [openTab, setOpenTab] = useState<TabType | null>(() =>
+    resolvePreferredTab(variant, showPlanTab),
+  );
   const panelRef = useRef<HTMLDivElement>(null);
   const planTotal = plan?.steps.length ?? 0;
   const planCompleted =
     plan?.steps.filter((step) => step.status === "completed").length ?? 0;
-  const showPlanTab = isPlanMode || Boolean(plan);
-  const showInlinePlanTab = showPlanTab && !isCodexEngine;
+  const showInlinePlanTab = variant === "dock" ? showPlanTab : showPlanTab && !isCodexEngine;
+  const showPlanTabButton = variant === "dock"
+    ? showInlinePlanTab
+    : !isCodexEngine && showInlinePlanTab;
   const codexTaskItems = useMemo(() => {
     if (isCodexEngine && plan && plan.steps.length > 0) {
       return plan.steps.map((step) => {
@@ -81,7 +98,7 @@ export const StatusPanel = memo(function StatusPanel({
 
   // 点击外部关闭 popover
   useEffect(() => {
-    if (!openTab) return;
+    if (variant !== "popover" || !openTab) return;
     function handleClickOutside(event: MouseEvent) {
       if (
         panelRef.current &&
@@ -92,10 +109,10 @@ export const StatusPanel = memo(function StatusPanel({
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [openTab]);
+  }, [openTab, variant]);
 
   useEffect(() => {
-    if (!openTab) return;
+    if (variant !== "popover" || !openTab) return;
     function handleEscape(event: KeyboardEvent) {
       if (event.key === "Escape") {
         setOpenTab(null);
@@ -103,166 +120,325 @@ export const StatusPanel = memo(function StatusPanel({
     }
     document.addEventListener("keydown", handleEscape);
     return () => document.removeEventListener("keydown", handleEscape);
-  }, [openTab]);
+  }, [openTab, variant]);
+
+  useEffect(() => {
+    if (variant !== "dock") {
+      return;
+    }
+    if (openTab === "plan" && !showInlinePlanTab) {
+      setOpenTab("todo");
+      return;
+    }
+    if (!openTab) {
+      setOpenTab(resolvePreferredTab(variant, showInlinePlanTab));
+    }
+  }, [openTab, showInlinePlanTab, variant]);
 
   const handleTabClick = useCallback(
     (tab: TabType) => {
-      setOpenTab((prev) => (prev === tab ? null : tab));
+      setOpenTab((prev) => {
+        if (variant === "dock") {
+          return tab;
+        }
+        return prev === tab ? null : tab;
+      });
     },
-    [],
+    [variant],
   );
 
   if (!expanded) return null;
 
+  const activeTab = variant === "dock"
+    ? openTab ?? resolvePreferredTab(variant, showInlinePlanTab)
+    : openTab;
+  const contentNode = (
+    <>
+      {activeTab === "todo" && <TodoList todos={isCodexEngine ? codexTaskItems : todos} />}
+      {activeTab === "subagent" && <SubagentList subagents={subagents} />}
+      {activeTab === "files" && (
+        <FileChangesList
+          fileChanges={fileChanges}
+          totalAdditions={totalAdditions}
+          totalDeletions={totalDeletions}
+          onOpenDiffPath={onOpenDiffPath}
+          onAfterSelect={() => {
+            if (variant !== "dock") {
+              setOpenTab(null);
+            }
+          }}
+        />
+      )}
+      {activeTab === "plan" && (
+        <PlanList
+          plan={plan}
+          isPlanMode={isPlanMode}
+          isProcessing={isProcessing}
+          isCodexEngine={isCodexEngine}
+        />
+      )}
+    </>
+  );
+
   return (
-    <div className="sp-root" ref={panelRef}>
-      {/* Popover - 向上弹出 */}
-      {openTab && (
-        <div className="sp-popover">
-          <div className="sp-popover-content">
-            {openTab === "todo" && <TodoList todos={isCodexEngine ? codexTaskItems : todos} />}
-            {openTab === "subagent" && <SubagentList subagents={subagents} />}
-            {openTab === "files" && (
-              <FileChangesList
-                fileChanges={fileChanges}
-                totalAdditions={totalAdditions}
-                totalDeletions={totalDeletions}
-                onOpenDiffPath={onOpenDiffPath}
-                onAfterSelect={() => setOpenTab(null)}
-              />
+    <div className={`sp-root${variant === "dock" ? " sp-root--dock" : ""}`} ref={panelRef}>
+      {variant === "dock" ? (
+        <>
+          <div className="sp-tabs sp-tabs--dock">
+            {isCodexEngine && (
+              <button
+                type="button"
+                className={`sp-tab${activeTab === "todo" ? " sp-tab-active" : ""}`}
+                onClick={() => handleTabClick("todo")}
+              >
+                <ListChecks size={14} className="sp-tab-icon" />
+                <span className="sp-tab-label">{t("statusPanel.tabTodos")}</span>
+                <span className="sp-tab-count">
+                  {codexTaskCompleted}/{codexTaskTotal}
+                </span>
+                {isProcessing && codexTaskInProgress && (
+                  <span className="sp-tab-loading" />
+                )}
+              </button>
             )}
-            {openTab === "plan" && (
-              <PlanList
-                plan={plan}
-                isPlanMode={isPlanMode}
-                isProcessing={isProcessing}
-                isCodexEngine={isCodexEngine}
-              />
+
+            {isCodexEngine && (
+              <button
+                type="button"
+                className={`sp-tab${activeTab === "subagent" ? " sp-tab-active" : ""}`}
+                onClick={() => handleTabClick("subagent")}
+              >
+                <Bot size={14} className="sp-tab-icon" />
+                <span className="sp-tab-label">{t("statusPanel.tabAgents")}</span>
+                <span className="sp-tab-count">
+                  {subagentCompleted}/{subagentTotal}
+                </span>
+                {isProcessing && hasRunningSubagent && (
+                  <span className="sp-tab-loading" />
+                )}
+              </button>
+            )}
+
+            {isCodexEngine && (
+              <button
+                type="button"
+                className={`sp-tab${activeTab === "files" ? " sp-tab-active" : ""}`}
+                onClick={() => handleTabClick("files")}
+                aria-expanded={activeTab === "files"}
+              >
+                <FileEdit size={14} className="sp-tab-icon" />
+                <span className="sp-tab-label">{t("statusPanel.tabEdits")}</span>
+                <span className="sp-tab-file-stats">
+                  <span className="sp-stat-add">+{totalAdditions}</span>
+                  <span className="sp-stat-mod">-{totalDeletions}</span>
+                </span>
+              </button>
+            )}
+
+            {!isCodexEngine && (
+              <button
+                type="button"
+                className={`sp-tab${activeTab === "todo" ? " sp-tab-active" : ""}`}
+                onClick={() => handleTabClick("todo")}
+              >
+                <ListChecks size={14} className="sp-tab-icon" />
+                <span className="sp-tab-label">{t("statusPanel.tabTodos")}</span>
+                <span className="sp-tab-count">
+                  {todoCompleted}/{todoTotal}
+                </span>
+                {isProcessing && hasInProgressTodo && (
+                  <span className="sp-tab-loading" />
+                )}
+              </button>
+            )}
+
+            {!isCodexEngine && (
+              <button
+                type="button"
+                className={`sp-tab${activeTab === "subagent" ? " sp-tab-active" : ""}`}
+                onClick={() => handleTabClick("subagent")}
+              >
+                <Bot size={14} className="sp-tab-icon" />
+                <span className="sp-tab-label">{t("statusPanel.tabSubagents")}</span>
+                <span className="sp-tab-count">
+                  {subagentCompleted}/{subagentTotal}
+                </span>
+                {isProcessing && hasRunningSubagent && (
+                  <span className="sp-tab-loading" />
+                )}
+              </button>
+            )}
+
+            {!isCodexEngine && (
+              <button
+                type="button"
+                className={`sp-tab${activeTab === "files" ? " sp-tab-active" : ""}`}
+                onClick={() => handleTabClick("files")}
+                aria-expanded={activeTab === "files"}
+              >
+                <FileEdit size={14} className="sp-tab-icon" />
+                <span className="sp-tab-label">{t("statusPanel.tabEdits")}</span>
+                <span className="sp-tab-file-stats">
+                  <span className="sp-stat-add">+{totalAdditions}</span>
+                  <span className="sp-stat-mod">-{totalDeletions}</span>
+                </span>
+              </button>
+            )}
+
+            {showPlanTabButton && (
+              <button
+                type="button"
+                className={`sp-tab${activeTab === "plan" ? " sp-tab-active" : ""}`}
+                onClick={() => handleTabClick("plan")}
+                aria-expanded={activeTab === "plan"}
+              >
+                <ListTodo size={14} className="sp-tab-icon" />
+                <span className="sp-tab-label">{t("statusPanel.tabPlan")}</span>
+                <span className="sp-tab-count">
+                  {planCompleted}/{planTotal}
+                </span>
+                {isProcessing && isPlanMode && (
+                  <span className="sp-tab-loading" />
+                )}
+              </button>
             )}
           </div>
-        </div>
+          <div className="sp-dock-shell">
+            <div className="sp-popover-content sp-dock-content">
+              {contentNode}
+            </div>
+          </div>
+        </>
+      ) : (
+        <>
+          {openTab && (
+            <div className="sp-popover">
+              <div className="sp-popover-content">
+                {contentNode}
+              </div>
+            </div>
+          )}
+          <div className="sp-tabs">
+            {isCodexEngine && (
+              <button
+                type="button"
+                className={`sp-tab${activeTab === "todo" ? " sp-tab-active" : ""}`}
+                onClick={() => handleTabClick("todo")}
+              >
+                <ListChecks size={14} className="sp-tab-icon" />
+                <span className="sp-tab-label">{t("statusPanel.tabTodos")}</span>
+                <span className="sp-tab-count">
+                  {codexTaskCompleted}/{codexTaskTotal}
+                </span>
+                {isProcessing && codexTaskInProgress && (
+                  <span className="sp-tab-loading" />
+                )}
+              </button>
+            )}
+
+            {isCodexEngine && (
+              <button
+                type="button"
+                className={`sp-tab${activeTab === "subagent" ? " sp-tab-active" : ""}`}
+                onClick={() => handleTabClick("subagent")}
+              >
+                <Bot size={14} className="sp-tab-icon" />
+                <span className="sp-tab-label">{t("statusPanel.tabAgents")}</span>
+                <span className="sp-tab-count">
+                  {subagentCompleted}/{subagentTotal}
+                </span>
+                {isProcessing && hasRunningSubagent && (
+                  <span className="sp-tab-loading" />
+                )}
+              </button>
+            )}
+
+            {isCodexEngine && (
+              <button
+                type="button"
+                className={`sp-tab${activeTab === "files" ? " sp-tab-active" : ""}`}
+                onClick={() => handleTabClick("files")}
+                aria-expanded={activeTab === "files"}
+              >
+                <FileEdit size={14} className="sp-tab-icon" />
+                <span className="sp-tab-label">{t("statusPanel.tabEdits")}</span>
+                <span className="sp-tab-file-stats">
+                  <span className="sp-stat-add">+{totalAdditions}</span>
+                  <span className="sp-stat-mod">-{totalDeletions}</span>
+                </span>
+              </button>
+            )}
+
+            {!isCodexEngine && (
+              <button
+                type="button"
+                className={`sp-tab${activeTab === "todo" ? " sp-tab-active" : ""}`}
+                onClick={() => handleTabClick("todo")}
+              >
+                <ListChecks size={14} className="sp-tab-icon" />
+                <span className="sp-tab-label">{t("statusPanel.tabTodos")}</span>
+                <span className="sp-tab-count">
+                  {todoCompleted}/{todoTotal}
+                </span>
+                {isProcessing && hasInProgressTodo && (
+                  <span className="sp-tab-loading" />
+                )}
+              </button>
+            )}
+
+            {!isCodexEngine && (
+              <button
+                type="button"
+                className={`sp-tab${activeTab === "subagent" ? " sp-tab-active" : ""}`}
+                onClick={() => handleTabClick("subagent")}
+              >
+                <Bot size={14} className="sp-tab-icon" />
+                <span className="sp-tab-label">{t("statusPanel.tabSubagents")}</span>
+                <span className="sp-tab-count">
+                  {subagentCompleted}/{subagentTotal}
+                </span>
+                {isProcessing && hasRunningSubagent && (
+                  <span className="sp-tab-loading" />
+                )}
+              </button>
+            )}
+
+            {!isCodexEngine && (
+              <button
+                type="button"
+                className={`sp-tab${activeTab === "files" ? " sp-tab-active" : ""}`}
+                onClick={() => handleTabClick("files")}
+                aria-expanded={activeTab === "files"}
+              >
+                <FileEdit size={14} className="sp-tab-icon" />
+                <span className="sp-tab-label">{t("statusPanel.tabEdits")}</span>
+                <span className="sp-tab-file-stats">
+                  <span className="sp-stat-add">+{totalAdditions}</span>
+                  <span className="sp-stat-mod">-{totalDeletions}</span>
+                </span>
+              </button>
+            )}
+
+            {showPlanTabButton && (
+              <button
+                type="button"
+                className={`sp-tab${activeTab === "plan" ? " sp-tab-active" : ""}`}
+                onClick={() => handleTabClick("plan")}
+                aria-expanded={activeTab === "plan"}
+              >
+                <ListTodo size={14} className="sp-tab-icon" />
+                <span className="sp-tab-label">{t("statusPanel.tabPlan")}</span>
+                <span className="sp-tab-count">
+                  {planCompleted}/{planTotal}
+                </span>
+                {isProcessing && isPlanMode && (
+                  <span className="sp-tab-loading" />
+                )}
+              </button>
+            )}
+          </div>
+        </>
       )}
-
-      {/* Tab 栏 */}
-      <div className="sp-tabs">
-        {isCodexEngine && (
-          <button
-            type="button"
-            className={`sp-tab${openTab === "todo" ? " sp-tab-active" : ""}`}
-            onClick={() => handleTabClick("todo")}
-          >
-            <ListChecks size={14} className="sp-tab-icon" />
-            <span className="sp-tab-label">{t("statusPanel.tabTodos")}</span>
-            <span className="sp-tab-count">
-              {codexTaskCompleted}/{codexTaskTotal}
-            </span>
-            {isProcessing && codexTaskInProgress && (
-              <span className="sp-tab-loading" />
-            )}
-          </button>
-        )}
-
-        {isCodexEngine && (
-          <button
-            type="button"
-            className={`sp-tab${openTab === "subagent" ? " sp-tab-active" : ""}`}
-            onClick={() => handleTabClick("subagent")}
-          >
-            <Bot size={14} className="sp-tab-icon" />
-            <span className="sp-tab-label">{t("statusPanel.tabAgents")}</span>
-            <span className="sp-tab-count">
-              {subagentCompleted}/{subagentTotal}
-            </span>
-            {isProcessing && hasRunningSubagent && (
-              <span className="sp-tab-loading" />
-            )}
-          </button>
-        )}
-
-        {isCodexEngine && (
-          <button
-            type="button"
-            className={`sp-tab${openTab === "files" ? " sp-tab-active" : ""}`}
-            onClick={() => handleTabClick("files")}
-            aria-expanded={openTab === "files"}
-          >
-            <FileEdit size={14} className="sp-tab-icon" />
-            <span className="sp-tab-label">{t("statusPanel.tabEdits")}</span>
-            <span className="sp-tab-file-stats">
-              <span className="sp-stat-add">+{totalAdditions}</span>
-              <span className="sp-stat-mod">-{totalDeletions}</span>
-            </span>
-          </button>
-        )}
-
-        {!isCodexEngine && (
-          <button
-            type="button"
-            className={`sp-tab${openTab === "todo" ? " sp-tab-active" : ""}`}
-            onClick={() => handleTabClick("todo")}
-          >
-            <ListChecks size={14} className="sp-tab-icon" />
-            <span className="sp-tab-label">{t("statusPanel.tabTodos")}</span>
-            <span className="sp-tab-count">
-              {todoCompleted}/{todoTotal}
-            </span>
-            {isProcessing && hasInProgressTodo && (
-              <span className="sp-tab-loading" />
-            )}
-          </button>
-        )}
-
-        {!isCodexEngine && (
-          <button
-            type="button"
-            className={`sp-tab${openTab === "subagent" ? " sp-tab-active" : ""}`}
-            onClick={() => handleTabClick("subagent")}
-          >
-            <Bot size={14} className="sp-tab-icon" />
-            <span className="sp-tab-label">{t("statusPanel.tabSubagents")}</span>
-            <span className="sp-tab-count">
-              {subagentCompleted}/{subagentTotal}
-            </span>
-            {isProcessing && hasRunningSubagent && (
-              <span className="sp-tab-loading" />
-            )}
-          </button>
-        )}
-
-        {!isCodexEngine && (
-          <button
-            type="button"
-            className={`sp-tab${openTab === "files" ? " sp-tab-active" : ""}`}
-            onClick={() => handleTabClick("files")}
-            aria-expanded={openTab === "files"}
-          >
-            <FileEdit size={14} className="sp-tab-icon" />
-            <span className="sp-tab-label">{t("statusPanel.tabEdits")}</span>
-            <span className="sp-tab-file-stats">
-              <span className="sp-stat-add">+{totalAdditions}</span>
-              <span className="sp-stat-mod">-{totalDeletions}</span>
-            </span>
-          </button>
-        )}
-
-        {!isCodexEngine && showInlinePlanTab && (
-          <button
-            type="button"
-            className={`sp-tab${openTab === "plan" ? " sp-tab-active" : ""}`}
-            onClick={() => handleTabClick("plan")}
-            aria-expanded={openTab === "plan"}
-          >
-            <ListTodo size={14} className="sp-tab-icon" />
-            <span className="sp-tab-label">{t("statusPanel.tabPlan")}</span>
-            <span className="sp-tab-count">
-              {planCompleted}/{planTotal}
-            </span>
-            {isProcessing && isPlanMode && (
-              <span className="sp-tab-loading" />
-            )}
-          </button>
-        )}
-      </div>
     </div>
   );
 });

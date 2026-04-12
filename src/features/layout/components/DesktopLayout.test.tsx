@@ -69,4 +69,17 @@ describe("DesktopLayout", () => {
     expect(rightPanel?.className).toContain("plan-collapsed");
     expect(rightPanel?.className).toContain("is-solo");
   });
+
+  it("keeps right panel bottom collapsed when no merged plan node is mounted", () => {
+    cleanup();
+    const { container } = renderDesktopLayout({
+      planPanelNode: null,
+      hasActivePlan: true,
+    });
+
+    const rightPanel = container.querySelector(".right-panel");
+    expect(rightPanel?.className).toContain("plan-collapsed");
+    expect(container.querySelector(".right-panel-bottom")).toBeNull();
+    expect(container.querySelector(".right-panel-divider")).toBeNull();
+  });
 });

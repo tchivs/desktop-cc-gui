@@ -158,6 +158,58 @@ describe("StatusPanel", () => {
     expect(allTabs.length).toBe(0);
   });
 
+  it("renders dock variant with plan tab selected by default", () => {
+    render(
+      <StatusPanel
+        items={[editToolItem]}
+        isProcessing={false}
+        plan={planSample}
+        isPlanMode
+        variant="dock"
+      />,
+    );
+
+    const dockRoot = document.querySelector(".sp-root--dock");
+    expect(dockRoot).toBeTruthy();
+    expect(screen.getByText("Plan")).toBeTruthy();
+    expect(screen.getByText("plan")).toBeTruthy();
+    expect(screen.getByText("step 1")).toBeTruthy();
+  });
+
+  it("keeps dock tab content visible when clicking the active tab again", () => {
+    render(
+      <StatusPanel
+        items={[editToolItem]}
+        isProcessing={false}
+        plan={planSample}
+        isPlanMode
+        variant="dock"
+      />,
+    );
+
+    fireEvent.click(screen.getByText("statusPanel.tabEdits"));
+    expect(screen.getByText("README.md")).toBeTruthy();
+    fireEvent.click(screen.getByText("statusPanel.tabEdits"));
+    expect(screen.getByText("README.md")).toBeTruthy();
+  });
+
+  it("shows plan tab in dock mode for codex threads with plan data", () => {
+    render(
+      <StatusPanel
+        items={[taskToolItem]}
+        isProcessing={false}
+        plan={planSample}
+        isPlanMode
+        isCodexEngine
+        variant="dock"
+      />,
+    );
+
+    expect(screen.getByText("Plan")).toBeTruthy();
+    fireEvent.click(screen.getByText("Plan"));
+    expect(screen.getByText("step 1")).toBeTruthy();
+  });
+
   it("keeps codex status panel visible even when only plan data exists", () => {
     render(
       <StatusPanel

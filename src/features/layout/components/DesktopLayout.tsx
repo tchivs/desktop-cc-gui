@@ -77,7 +77,6 @@ export function DesktopLayout({
   runtimeConsoleDockNode,
   terminalDockNode,
   debugPanelNode,
-  hasActivePlan,
   onSidebarResizeStart,
   onRightPanelResizeStart,
   onPlanPanelResizeStart,
@@ -93,6 +92,7 @@ export function DesktopLayout({
   const isEditorHorizontalSplitMode =
     isEditorSplitMode && editorSplitLayout === "horizontal";
   const isEditorSplitChatVisible = isEditorSplitMode && !isEditorFileMaximized;
+  const hasBottomPanel = Boolean(planPanelNode);
 
   useEffect(() => {
     const diffLayer = diffLayerRef.current;
@@ -332,19 +332,23 @@ export function DesktopLayout({
                     />
                     <div
                       className={`right-panel ${
-                        hasActivePlan && !isSoloMode ? "" : "plan-collapsed"
+                        hasBottomPanel && !isSoloMode ? "" : "plan-collapsed"
                       }${isSoloMode ? " is-solo" : ""}`}
                     >
                       {rightPanelToolbarNode}
                       <div className="right-panel-top">{gitDiffPanelNode}</div>
-                      <div
-                        className="right-panel-divider"
-                        role="separator"
-                        aria-orientation="horizontal"
-                        aria-label={t("layout.resizePlanPanel")}
-                        onMouseDown={onPlanPanelResizeStart}
-                      />
-                      <div className="right-panel-bottom">{planPanelNode}</div>
+                      {hasBottomPanel ? (
+                        <>
+                          <div
+                            className="right-panel-divider"
+                            role="separator"
+                            aria-orientation="horizontal"
+                            aria-label={t("layout.resizePlanPanel")}
+                            onMouseDown={onPlanPanelResizeStart}
+                          />
+                          <div className="right-panel-bottom">{planPanelNode}</div>
+                        </>
+                      ) : null}
                     </div>
                   </>
                 )}

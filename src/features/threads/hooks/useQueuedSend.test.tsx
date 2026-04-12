@@ -16,6 +16,7 @@ const makeOptions = (
   overrides: Partial<Parameters<typeof useQueuedSend>[0]> = {},
 ) => ({
   activeThreadId: "thread-1",
+  activeTurnId: undefined,
   isProcessing: false,
   isReviewing: false,
   steerEnabled: false,
@@ -38,6 +39,8 @@ const makeOptions = (
   startFast: vi.fn().mockResolvedValue(undefined),
   startMode: vi.fn().mockResolvedValue(undefined),
   setCodexCollaborationMode: vi.fn(),
+  getCodexCollaborationPayload: vi.fn().mockReturnValue(null),
+  interruptTurn: vi.fn().mockResolvedValue(undefined),
   clearActiveImages: vi.fn(),
   ...overrides,
 });
@@ -737,6 +740,442 @@ describe("useQueuedSend", () => {
       "img-1",
       "img-2",
     ]);
+  });
+
+  it("fuses queued message into the active run without interrupting when steer is enabled", async () => {
+    const interruptTurn = vi.fn().mockResolvedValue(undefined);
+    const options = makeOptions({
+      isProcessing: true,
+      steerEnabled: true,
+      interruptTurn,
+    });
+    const { result } = renderHook((props) => useQueuedSend(props), {
+      initialProps: options,
+    });
+
+    await act(async () => {
+      await result.current.queueMessage("Fuse now", ["img-1"], {
+        selectedMemoryIds: ["memory-1"],
+      });
+    });
+
+    const queuedItem = result.current.activeQueue[0];
+    expect(queuedItem).toBeTruthy();
+
+    await act(async () => {
+      await result.current.fuseQueuedMessage("thread-1", queuedItem!.id);
+    });
+
+    expect(interruptTurn).not.toHaveBeenCalled();
+    expect(options.sendUserMessage).toHaveBeenCalledWith(
+      "Fuse now",
+      ["img-1"],
+      { selectedMemoryIds: ["memory-1"] },
+    );
+    expect(result.current.activeQueue).toHaveLength(0);
+    expect(result.current.activeFusingMessageId).toBeNull();
+    expect(result.current.canFuseActiveQueue).toBe(false);
+  });
+
+  it("keeps later queued items fusible during consecutive same-run fusions", async () => {
+    const options = makeOptions({
+      isProcessing: true,
+      steerEnabled: true,
+      interruptTurn: vi.fn().mockResolvedValue(undefined),
+    });
+    const { result } = renderHook((props) => useQueuedSend(props), {
+      initialProps: options,
+    });
+
+    await act(async () => {
+      await result.current.queueMessage("Fuse first");
+      await result.current.queueMessage("Fuse second");
+      await result.current.queueMessage("Fuse third");
+    });
+
+    const firstFusionId = result.current.activeQueue[0]?.id;
+    expect(firstFusionId).toBeTruthy();
+
+    await act(async () => {
+      await result.current.fuseQueuedMessage("thread-1", firstFusionId!);
+    });
+
+    expect(result.current.activeFusingMessageId).toBeNull();
+    expect(result.current.canFuseActiveQueue).toBe(true);
+
+    const secondFusionId = result.current.activeQueue[0]?.id;
+    expect(secondFusionId).toBeTruthy();
+
+    await act(async () => {
+      await result.current.fuseQueuedMessage("thread-1", secondFusionId!);
+    });
+
+    expect(result.current.activeFusingMessageId).toBeNull();
+    expect(result.current.canFuseActiveQueue).toBe(true);
+    expect(result.current.activeQueue[0]?.text).toBe("Fuse third");
+  });
+
+  it("falls back to safe cutover fusion and waits for the next run boundary", async () => {
+    const interruptTurn = vi.fn().mockResolvedValue(undefined);
+    const sendUserMessage = vi.fn().mockResolvedValue(undefined);
+    const options = makeOptions({
+      isProcessing: true,
+      steerEnabled: false,
+      interruptTurn,
+      sendUserMessage,
+    });
+    const { result, rerender } = renderHook((props) => useQueuedSend(props), {
+      initialProps: options,
+    });
+
+    await act(async () => {
+      await result.current.queueMessage("Fuse via cutover", ["img-1"], {
+        selectedMemoryIds: ["memory-1"],
+      });
+    });
+
+    const queuedItem = result.current.activeQueue[0];
+    expect(queuedItem).toBeTruthy();
+
+    await act(async () => {
+      await result.current.fuseQueuedMessage("thread-1", queuedItem!.id);
+    });
+
+    expect(interruptTurn).toHaveBeenCalledTimes(1);
+    expect(interruptTurn).toHaveBeenCalledWith({ reason: "queue-fusion" });
+    expect(sendUserMessage).toHaveBeenCalledWith(
+      "Fuse via cutover",
+      ["img-1"],
+      { selectedMemoryIds: ["memory-1"] },
+    );
+    expect(interruptTurn.mock.invocationCallOrder[0]).toBeLessThan(
+      sendUserMessage.mock.invocationCallOrder[0] ?? Infinity,
+    );
+    expect(result.current.activeFusingMessageId).toBe(queuedItem!.id);
+
+    await act(async () => {
+      rerender({ ...options, isProcessing: false });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(result.current.activeFusingMessageId).toBe(queuedItem!.id);
+
+    await act(async () => {
+      rerender({ ...options, isProcessing: true });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(result.current.activeFusingMessageId).toBeNull();
+  });
+
+  it("refuses to fuse queued slash commands", async () => {
+    const interruptTurn = vi.fn().mockResolvedValue(undefined);
+    const sendUserMessage = vi.fn().mockResolvedValue(undefined);
+    const options = makeOptions({
+      isProcessing: true,
+      steerEnabled: false,
+      interruptTurn,
+      sendUserMessage,
+    });
+    const { result } = renderHook((props) => useQueuedSend(props), {
+      initialProps: options,
+    });
+
+    await act(async () => {
+      await result.current.queueMessage("/clear");
+    });
+
+    const queuedItem = result.current.activeQueue[0];
+    expect(queuedItem?.text).toBe("/clear");
+
+    await act(async () => {
+      await result.current.fuseQueuedMessage("thread-1", queuedItem!.id);
+    });
+
+    expect(interruptTurn).not.toHaveBeenCalled();
+    expect(sendUserMessage).not.toHaveBeenCalled();
+    expect(result.current.activeFusingMessageId).toBeNull();
+    expect(result.current.activeQueue[0]?.text).toBe("/clear");
+  });
+
+  it("restores the original queue index when fusion dispatch fails", async () => {
+    const sendUserMessage = vi.fn().mockRejectedValue(new Error("boom"));
+    const options = makeOptions({
+      isProcessing: true,
+      steerEnabled: false,
+      sendUserMessage,
+    });
+    const { result } = renderHook((props) => useQueuedSend(props), {
+      initialProps: options,
+    });
+
+    await act(async () => {
+      await result.current.queueMessage("Alpha");
+      await result.current.queueMessage("Beta");
+      await result.current.queueMessage("Gamma");
+    });
+
+    const targetMessageId = result.current.activeQueue[1]?.id;
+    expect(targetMessageId).toBeTruthy();
+
+    await expect(
+      act(async () => {
+        await result.current.fuseQueuedMessage("thread-1", targetMessageId!);
+      }),
+    ).rejects.toThrow("boom");
+
+    expect(result.current.activeFusingMessageId).toBeNull();
+    expect(result.current.activeQueue.map((entry) => entry.text)).toEqual([
+      "Alpha",
+      "Beta",
+      "Gamma",
+    ]);
+  });
+
+  it("pauses same-thread auto-drain while fusion is unresolved", async () => {
+    const interruptTurn = vi.fn().mockResolvedValue(undefined);
+    const options = makeOptions({
+      isProcessing: true,
+      steerEnabled: false,
+      interruptTurn,
+    });
+    const { result, rerender } = renderHook((props) => useQueuedSend(props), {
+      initialProps: options,
+    });
+
+    await act(async () => {
+      await result.current.queueMessage("Fuse first");
+      await result.current.queueMessage("Drain later");
+    });
+
+    const fuseTargetId = result.current.activeQueue[0]?.id;
+    expect(fuseTargetId).toBeTruthy();
+
+    await act(async () => {
+      await result.current.fuseQueuedMessage("thread-1", fuseTargetId!);
+    });
+
+    expect(options.sendUserMessage).toHaveBeenCalledTimes(1);
+    expect(options.sendUserMessage).toHaveBeenLastCalledWith("Fuse first", []);
+    expect(result.current.activeQueue.map((entry) => entry.text)).toEqual([
+      "Drain later",
+    ]);
+
+    await act(async () => {
+      rerender({ ...options, isProcessing: false });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(options.sendUserMessage).toHaveBeenCalledTimes(1);
+    expect(result.current.activeFusingMessageId).toBe(fuseTargetId);
+
+    await act(async () => {
+      rerender({ ...options, isProcessing: true });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      rerender({ ...options, isProcessing: false });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(options.sendUserMessage).toHaveBeenCalledTimes(2);
+    expect(options.sendUserMessage).toHaveBeenLastCalledWith("Drain later", []);
+    expect(result.current.activeFusingMessageId).toBeNull();
+  });
+
+  it("clears an unresolved fusion lock after stop and resumes queue draining", async () => {
+    vi.useFakeTimers();
+    const interruptTurn = vi.fn().mockResolvedValue(undefined);
+    const sendUserMessage = vi.fn().mockResolvedValue(undefined);
+    const options = makeOptions({
+      isProcessing: true,
+      steerEnabled: false,
+      interruptTurn,
+      sendUserMessage,
+    });
+    const { result, rerender } = renderHook((props) => useQueuedSend(props), {
+      initialProps: options,
+    });
+
+    await act(async () => {
+      await result.current.queueMessage("Fuse first");
+      await result.current.queueMessage("Drain after stop");
+    });
+
+    const fuseTargetId = result.current.activeQueue[0]?.id;
+    expect(fuseTargetId).toBeTruthy();
+
+    await act(async () => {
+      await result.current.fuseQueuedMessage("thread-1", fuseTargetId!);
+    });
+
+    await act(async () => {
+      rerender({ ...options, isProcessing: false });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(result.current.activeFusingMessageId).toBe(fuseTargetId);
+    expect(result.current.canFuseActiveQueue).toBe(false);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_500);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(result.current.activeFusingMessageId).toBeNull();
+    expect(sendUserMessage).toHaveBeenCalledTimes(2);
+    expect(sendUserMessage).toHaveBeenNthCalledWith(1, "Fuse first", []);
+    expect(sendUserMessage).toHaveBeenNthCalledWith(
+      2,
+      "Drain after stop",
+      [],
+    );
+    vi.useRealTimers();
+  });
+
+  it("allows a second fusion after the previous one was cleared by stop", async () => {
+    vi.useFakeTimers();
+    const interruptTurn = vi.fn().mockResolvedValue(undefined);
+    const sendUserMessage = vi.fn().mockResolvedValue(undefined);
+    const options = makeOptions({
+      isProcessing: true,
+      steerEnabled: false,
+      interruptTurn,
+      sendUserMessage,
+    });
+    const { result, rerender } = renderHook((props) => useQueuedSend(props), {
+      initialProps: options,
+    });
+
+    await act(async () => {
+      await result.current.queueMessage("Fuse first");
+      await result.current.queueMessage("Second run");
+      await result.current.queueMessage("Fuse again");
+    });
+
+    const firstFusionId = result.current.activeQueue[0]?.id;
+    expect(firstFusionId).toBeTruthy();
+
+    await act(async () => {
+      await result.current.fuseQueuedMessage("thread-1", firstFusionId!);
+    });
+
+    await act(async () => {
+      rerender({ ...options, isProcessing: false });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_500);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(result.current.activeFusingMessageId).toBeNull();
+    expect(sendUserMessage).toHaveBeenNthCalledWith(2, "Second run", []);
+
+    await act(async () => {
+      rerender({ ...options, isProcessing: true });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const secondFusionId = result.current.activeQueue[0]?.id;
+    expect(secondFusionId).toBeTruthy();
+    expect(result.current.canFuseActiveQueue).toBe(true);
+
+    await act(async () => {
+      await result.current.fuseQueuedMessage("thread-1", secondFusionId!);
+    });
+
+    expect(sendUserMessage).toHaveBeenCalledTimes(3);
+    expect(sendUserMessage).toHaveBeenNthCalledWith(3, "Fuse again", []);
+    expect(result.current.activeFusingMessageId).toBe(secondFusionId);
+    vi.useRealTimers();
+  });
+
+  it("keeps later queued items fusible after a second cutover fusion starts", async () => {
+    const interruptTurn = vi.fn().mockResolvedValue(undefined);
+    const sendUserMessage = vi.fn().mockResolvedValue(undefined);
+    const options = makeOptions({
+      activeTurnId: "turn-1",
+      isProcessing: true,
+      steerEnabled: false,
+      interruptTurn,
+      sendUserMessage,
+    });
+    const { result, rerender } = renderHook((props) => useQueuedSend(props), {
+      initialProps: options,
+    });
+
+    await act(async () => {
+      await result.current.queueMessage("Fuse first");
+      await result.current.queueMessage("Fuse second");
+      await result.current.queueMessage("Fuse third");
+    });
+
+    const firstFusionId = result.current.activeQueue[0]?.id;
+    expect(firstFusionId).toBeTruthy();
+
+    await act(async () => {
+      await result.current.fuseQueuedMessage("thread-1", firstFusionId!);
+    });
+
+    await act(async () => {
+      rerender({ ...options, activeTurnId: "turn-2", isProcessing: true });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(result.current.activeFusingMessageId).toBeNull();
+
+    const secondFusionId = result.current.activeQueue[0]?.id;
+    expect(secondFusionId).toBeTruthy();
+
+    await act(async () => {
+      await result.current.fuseQueuedMessage("thread-1", secondFusionId!);
+    });
+
+    await act(async () => {
+      rerender({ ...options, activeTurnId: "turn-3", isProcessing: true });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(result.current.activeFusingMessageId).toBeNull();
+
+    expect(result.current.canFuseActiveQueue).toBe(true);
+    expect(result.current.activeQueue[0]?.text).toBe("Fuse third");
   });
 
   it("releases stalled in-flight queue item for opencode only", async () => {

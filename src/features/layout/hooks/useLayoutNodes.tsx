@@ -487,6 +487,9 @@ type LayoutNodesOptions = {
   onInsertHandled: (id: string) => void;
   onEditQueued: (item: QueuedMessage) => void;
   onDeleteQueued: (id: string) => void;
+  onFuseQueued: (id: string) => void | Promise<void>;
+  canFuseActiveQueue: boolean;
+  activeFusingMessageId: string | null;
   collaborationModes: CollaborationModeOption[];
   collaborationModesEnabled: boolean;
   selectedCollaborationModeId: string | null;
@@ -1134,6 +1137,9 @@ export function useLayoutNodes(options: LayoutNodesOptions): LayoutNodesResult {
       onInsertHandled={options.onInsertHandled}
       onEditQueued={options.onEditQueued}
       onDeleteQueued={options.onDeleteQueued}
+      onFuseQueued={options.onFuseQueued}
+      canFuseQueuedMessages={options.canFuseActiveQueue}
+      fusingQueuedMessageId={options.activeFusingMessageId}
       collaborationModes={options.collaborationModes}
       collaborationModesEnabled={options.collaborationModesEnabled}
       selectedCollaborationModeId={options.selectedCollaborationModeId}

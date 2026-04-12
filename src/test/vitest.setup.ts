@@ -554,6 +554,7 @@ vi.mock("react-i18next", () => ({
         "settings.unableToOpenConfig": "Unable to open config.",
         // Thread error messages
         "threads.sessionStopped": "会话已停止。",
+        "threads.sessionStoppedForFusion": "已切换到融合回复，内容正在继续生成。",
         "threads.turnFailed": "会话失败。",
         "threads.turnFailedWithMessage": "会话失败：{{message}}",
         "threads.turnFailedToStart": "会话启动失败。",

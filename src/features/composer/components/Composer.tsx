@@ -122,6 +122,9 @@ type ComposerProps = {
   queuedMessages?: QueuedMessage[];
   onEditQueued?: (item: QueuedMessage) => void;
   onDeleteQueued?: (id: string) => void;
+  onFuseQueued?: (id: string) => void | Promise<void>;
+  canFuseQueuedMessages?: boolean;
+  fusingQueuedMessageId?: string | null;
   sendLabel?: string;
   draftText?: string;
   onDraftChange?: (text: string) => void;
@@ -500,6 +503,9 @@ export const Composer = memo(function Composer({
   onRefreshAccountRateLimits,
   queuedMessages = [],
   onDeleteQueued,
+  onFuseQueued,
+  canFuseQueuedMessages = false,
+  fusingQueuedMessageId = null,
   sendLabel: _sendLabel = "Send",
   draftText = "",
   onDraftChange,
@@ -1350,6 +1356,9 @@ export const Composer = memo(function Composer({
           onRequestContextCompaction={handleManualCompactContext}
           queuedMessages={queuedMessages}
           onDeleteQueued={onDeleteQueued}
+          onFuseQueued={onFuseQueued}
+          canFuseQueuedMessages={canFuseQueuedMessages}
+          fusingQueuedMessageId={fusingQueuedMessageId}
           suggestionsOpen={suggestionsOpen}
           files={files}
           directories={directories}

@@ -1601,6 +1601,11 @@ const enPart2 = {
     removeFileContext: "Remove file context",
     removeContextSelection: "Remove selected item",
     removeFromQueue: "Remove from queue",
+    deleteQueuedMessage: "Delete",
+    fuseFromQueue: "Fuse",
+    fusingQueuedMessage: "Fusing",
+    fuseQueuedMessageFailed: "Fusion failed",
+    fuseQueuedMessageFailedDetail: "The queued message could not be merged into the active answer. Please try again.",
     dragDropHint: "Drop files into composer",
     dragDropMore: "+{{count}} files",
     commands: {

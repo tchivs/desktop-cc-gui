@@ -2354,6 +2354,7 @@ const enPart1 = {
     searchOlder: "Search older...",
     loadOlder: "Load older...",
     sessionStopped: "Session stopped.",
+    sessionStoppedForFusion: "Switched to the merged follow-up. Reply is continuing...",
     turnFailed: "Turn failed.",
     turnFailedWithMessage: "Turn failed: {{message}}",
     turnFailedToStart: "Turn failed to start.",

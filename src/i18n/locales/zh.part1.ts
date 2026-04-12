@@ -2310,6 +2310,7 @@ const zhPart1 = {
     searchOlder: "搜索更早的...",
     loadOlder: "加载更早的...",
     sessionStopped: "会话已停止。",
+    sessionStoppedForFusion: "已切换到融合回复，内容正在继续生成。",
     turnFailed: "会话失败。",
     turnFailedWithMessage: "会话失败：{{message}}",
     turnFailedToStart: "会话启动失败。",

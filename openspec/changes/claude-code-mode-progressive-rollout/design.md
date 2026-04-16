@@ -105,6 +105,24 @@
 
 - Claude 专属 AskUserQuestion 弹窗代替 approval：能短期跑通，但会让“审批”与“普通提问”混在一起，语义不稳。
 
+### Decision 4A: 在 approval bridge 缺失期间，为 Claude denial 提供 modeBlocked 兜底诊断
+
+**Decision**
+
+- 在未确认 Claude CLI 有稳定结构化 approval signal 之前，不提前开放 `default`。
+- 若 Claude 在 `code/default` 语义下对 `AskUserQuestion` 直接返回 `permission denied`，runtime 要把它降级映射成现有 `collaboration/modeBlocked` 提示。
+
+**Rationale**
+
+- 当前本地样本已证明 Claude 可能出现 `AskUserQuestion tool permission denied`，而不是 `approval/request`。
+- 用户可接受“暂时不开 default”，但不可接受“看起来支持、实际静默失败”。
+- 先把 denial 解释清楚，可以降低排障成本，并为后续继续调查真实 approval shape 留出空间。
+
+**Alternatives considered**
+
+- 忽略 denial，仅保留 `TurnError`：用户无法理解为什么没有弹审批提示。
+- 伪造 `approval/request` 并开放 `default`：没有可回传的真实 `request_id`，`accept/decline` 语义不成立。
+
 ### Decision 5: `acceptEdits` 必须以后验验证为准，而不是按命名直觉开放
 
 **Decision**

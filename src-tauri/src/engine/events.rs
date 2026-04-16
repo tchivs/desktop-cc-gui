@@ -254,6 +254,11 @@ enum ClaudeCompactionSignal {
     CompactionFailed,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClaudePermissionSignal {
+    RequestUserInputBlocked,
+}
+
 fn normalize_claude_signal_token(value: &str) -> String {
     value.trim().to_ascii_lowercase().replace(['-', ' '], "_")
 }
@@ -290,6 +295,24 @@ fn detect_claude_compaction_signal(data: &Value) -> Option<ClaudeCompactionSigna
             return Some(ClaudeCompactionSignal::Compacting);
         }
     }
+    None
+}
+
+fn detect_claude_permission_signal(data: &Value) -> Option<ClaudePermissionSignal> {
+    let signal_source = get_value_by_aliases(data, &["source"])
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !signal_source.eq_ignore_ascii_case("claude_permission_denied") {
+        return None;
+    }
+
+    let blocked_method = get_value_by_aliases(data, &["blockedMethod", "blocked_method"])
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if blocked_method == "item/tool/requestUserInput" {
+        return Some(ClaudePermissionSignal::RequestUserInputBlocked);
+    }
+
     None
 }
 
@@ -613,7 +636,67 @@ pub fn engine_event_to_app_server_event(
         }),
         EngineEvent::Raw { data, engine, .. } => {
             if matches!(engine, EngineType::Claude) {
-                if let Some(signal) = detect_claude_compaction_signal(data) {
+                if let Some(signal) = detect_claude_permission_signal(data) {
+                    match signal {
+                        ClaudePermissionSignal::RequestUserInputBlocked => {
+                            let blocked_method =
+                                get_value_by_aliases(data, &["blockedMethod", "blocked_method"])
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("item/tool/requestUserInput");
+                            let effective_mode =
+                                get_value_by_aliases(data, &["effectiveMode", "effective_mode"])
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("code");
+                            let reason_code =
+                                get_value_by_aliases(data, &["reasonCode", "reason_code"])
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("claude_permission_denied");
+                            let reason = get_value_by_aliases(
+                                data,
+                                &["reason", "message", "rawError", "raw_error"],
+                            )
+                            .and_then(|value| {
+                                if let Some(text) = value.as_str() {
+                                    return Some(text.to_string());
+                                }
+                                if value.is_object() || value.is_array() {
+                                    return serde_json::to_string(value).ok();
+                                }
+                                None
+                            })
+                            .unwrap_or_else(|| {
+                                "Claude denied the interactive tool before GUI approval could start."
+                                    .to_string()
+                            });
+                            let suggestion = get_value_by_aliases(data, &["suggestion"])
+                                .and_then(Value::as_str)
+                                .unwrap_or(
+                                    "Use Plan mode for this Claude workflow until the approval bridge is implemented.",
+                                );
+                            let request_id =
+                                get_value_by_aliases(data, &["requestId", "request_id"])
+                                    .cloned()
+                                    .unwrap_or_else(|| Value::String(item_id.to_string()));
+                            json!({
+                                "method": "collaboration/modeBlocked",
+                                "params": {
+                                    "threadId": thread_id,
+                                    "thread_id": thread_id,
+                                    "blockedMethod": blocked_method,
+                                    "blocked_method": blocked_method,
+                                    "effectiveMode": effective_mode,
+                                    "effective_mode": effective_mode,
+                                    "reasonCode": reason_code,
+                                    "reason_code": reason_code,
+                                    "reason": reason,
+                                    "suggestion": suggestion,
+                                    "requestId": request_id,
+                                    "request_id": request_id,
+                                }
+                            })
+                        }
+                    }
+                } else if let Some(signal) = detect_claude_compaction_signal(data) {
                     match signal {
                         ClaudeCompactionSignal::Compacting => {
                             let mut params = serde_json::Map::new();
@@ -773,6 +856,39 @@ mod tests {
             Value::String("thread-1".to_string())
         );
         assert_eq!(mapped.message["params"]["argv"], json!(["git", "status"]));
+    }
+
+    #[test]
+    fn claude_permission_denied_raw_event_maps_to_mode_blocked() {
+        let event = EngineEvent::Raw {
+            workspace_id: "ws-approval".to_string(),
+            engine: EngineType::Claude,
+            data: json!({
+                "type": "permission_denied",
+                "source": "claude_permission_denied",
+                "blockedMethod": "item/tool/requestUserInput",
+                "effectiveMode": "code",
+                "reasonCode": "claude_ask_user_question_permission_denied",
+                "reason": "Claude denied AskUserQuestion before any approval request reached the GUI.",
+                "suggestion": "Use Plan mode for now.",
+                "requestId": "tool-ask-1",
+            }),
+        };
+
+        let mapped =
+            engine_event_to_app_server_event(&event, "thread-1", "item-1").expect("mapped event");
+        assert_eq!(
+            mapped.message["method"],
+            Value::String("collaboration/modeBlocked".to_string())
+        );
+        assert_eq!(
+            mapped.message["params"]["blockedMethod"],
+            Value::String("item/tool/requestUserInput".to_string())
+        );
+        assert_eq!(
+            mapped.message["params"]["requestId"],
+            Value::String("tool-ask-1".to_string())
+        );
     }
 
     #[test]

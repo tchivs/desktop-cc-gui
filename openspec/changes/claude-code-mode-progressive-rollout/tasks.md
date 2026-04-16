@@ -9,6 +9,7 @@
 
 ### Batch B [P0] Claude Approval Bridge
 
+- [x] B.0 [文件:`src-tauri/src/engine/claude.rs`,`src-tauri/src/engine/events.rs`][目标: 在 approval bridge 缺失期间，把已识别的 Claude `AskUserQuestion permission denied` 显式映射到 `collaboration/modeBlocked`][完成定义: 用户不会只看到静默失败，GUI 能给出“先切 Plan mode”的可解释提示]
 - [ ] B.1 [文件:`src-tauri/src/engine/claude/event_conversion.rs`,`src-tauri/src/engine/claude.rs`][目标: 识别 Claude 运行时中的 approval-required 事件][完成定义: Claude 需要审批的操作可被 runtime 识别并标准化]
 - [ ] B.2 [文件:`src-tauri/src/engine/events.rs`,`src/features/app/hooks/useAppServerEvents.ts`][目标: 将 Claude approval request 映射到现有 approval/request 主链路][完成定义: UI 可收到 Claude 审批请求而不是静默失败]
 - [ ] B.3 [文件:`src-tauri/src/codex/mod.rs` 或对应共享响应入口][目标: 复用现有 `respond_to_server_request` 响应 Claude 审批结果][完成定义: accept/decline 能正确回到 Claude 运行时]

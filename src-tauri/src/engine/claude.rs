@@ -51,6 +51,12 @@ struct PendingClaudeTool {
     input_signature: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingClaudeToolSummary {
+    tool_id: String,
+    tool_name: String,
+}
+
 const RETRYABLE_PROMPT_TOO_LONG_PREFIX: &str = "__claude_retryable_prompt_too_long__:";
 const AUTO_COMPACT_SIGNAL_SOURCE: &str = "auto_compact_retry";
 
@@ -714,6 +720,12 @@ impl ClaudeSession {
                     return Err(Self::mark_retryable_prompt_too_long_error(&error_msg));
                 }
 
+                if let Some(mode_blocked_event) =
+                    self.build_mode_blocked_signal_from_error(turn_id, &error_msg)
+                {
+                    self.emit_turn_event(turn_id, mode_blocked_event);
+                }
+
                 self.emit_turn_event(
                     turn_id,
                     EngineEvent::TurnError {
@@ -1134,6 +1146,60 @@ impl ClaudeSession {
             .rev()
             .find(|entry| entry.turn_id == turn_id)
             .map(|entry| entry.tool_id.clone())
+    }
+
+    fn latest_pending_tool_summary(&self, turn_id: &str) -> Option<PendingClaudeToolSummary> {
+        let pending = self.pending_tools.lock().ok()?;
+        pending
+            .iter()
+            .rev()
+            .find(|entry| entry.turn_id == turn_id)
+            .map(|entry| PendingClaudeToolSummary {
+                tool_id: entry.tool_id.clone(),
+                tool_name: entry.tool_name.clone(),
+            })
+    }
+
+    fn build_mode_blocked_signal_from_error(
+        &self,
+        turn_id: &str,
+        error_message: &str,
+    ) -> Option<EngineEvent> {
+        let normalized_error = error_message.trim().to_ascii_lowercase();
+        if !normalized_error.contains("permission denied") {
+            return None;
+        }
+
+        let pending_tool = self.latest_pending_tool_summary(turn_id)?;
+        if !pending_tool
+            .tool_name
+            .eq_ignore_ascii_case("AskUserQuestion")
+        {
+            return None;
+        }
+
+        Some(EngineEvent::Raw {
+            workspace_id: self.workspace_id.clone(),
+            engine: EngineType::Claude,
+            data: json!({
+                "type": "permission_denied",
+                "source": "claude_permission_denied",
+                "blockedMethod": "item/tool/requestUserInput",
+                "blocked_method": "item/tool/requestUserInput",
+                "effectiveMode": "code",
+                "effective_mode": "code",
+                "reasonCode": "claude_ask_user_question_permission_denied",
+                "reason_code": "claude_ask_user_question_permission_denied",
+                "reason": "Claude denied AskUserQuestion before any approval request reached the GUI.",
+                "suggestion": "Claude default mode remains gated. Use Plan mode when the workflow needs AskUserQuestion or other interactive clarification.",
+                "requestId": pending_tool.tool_id,
+                "request_id": pending_tool.tool_id,
+                "toolName": pending_tool.tool_name,
+                "tool_name": pending_tool.tool_name,
+                "rawError": error_message,
+                "raw_error": error_message,
+            }),
+        })
     }
 
     /// Compute the true delta from a cumulative assistant text.
@@ -2443,6 +2509,55 @@ mod tests {
             }
             other => panic!("expected tool completed, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn build_mode_blocked_signal_from_error_maps_claude_ask_user_question_denial() {
+        let session = ClaudeSession::new(
+            "test-workspace".to_string(),
+            PathBuf::from("/tmp/test"),
+            None,
+        );
+        session.register_pending_tool("turn-a", "tool-ask-1", "AskUserQuestion", None);
+
+        let event = session
+            .build_mode_blocked_signal_from_error(
+                "turn-a",
+                "AskUserQuestion tool permission denied",
+            )
+            .expect("expected mode blocked signal");
+
+        match event {
+            EngineEvent::Raw { data, .. } => {
+                assert_eq!(
+                    data.get("blockedMethod").and_then(|value| value.as_str()),
+                    Some("item/tool/requestUserInput")
+                );
+                assert_eq!(
+                    data.get("requestId").and_then(|value| value.as_str()),
+                    Some("tool-ask-1")
+                );
+                assert_eq!(
+                    data.get("reasonCode").and_then(|value| value.as_str()),
+                    Some("claude_ask_user_question_permission_denied")
+                );
+            }
+            other => panic!("expected raw mode-blocked signal, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn build_mode_blocked_signal_from_error_ignores_non_permission_errors() {
+        let session = ClaudeSession::new(
+            "test-workspace".to_string(),
+            PathBuf::from("/tmp/test"),
+            None,
+        );
+        session.register_pending_tool("turn-a", "tool-ask-1", "AskUserQuestion", None);
+
+        assert!(session
+            .build_mode_blocked_signal_from_error("turn-a", "tool timed out")
+            .is_none());
     }
 
     #[test]

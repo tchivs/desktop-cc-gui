@@ -431,7 +431,13 @@ export async function mutateRuntimePool(mutation: {
   workspaceId: string;
   pinned?: boolean;
 }): Promise<RuntimePoolSnapshot> {
-  return invoke("mutate_runtime_pool", { mutation });
+  const { workspaceId, ...rest } = mutation;
+  return invoke("mutate_runtime_pool", {
+    mutation: {
+      ...rest,
+      workspace_id: workspaceId,
+    },
+  });
 }
 
 export async function startThread(workspaceId: string) {

@@ -131,6 +131,7 @@ import { OpenAppsSection } from "./settings-view/sections/OpenAppsSection";
 import { BasicAppearanceSection } from "./settings-view/sections/BasicAppearanceSection";
 import { CodexSection } from "./settings-view/sections/CodexSection";
 import { OtherSection } from "./settings-view/sections/OtherSection";
+import { RuntimePoolSection } from "./settings-view/sections/RuntimePoolSection";
 import { DetachedExternalChangeToggles } from "./settings-view/sections/DetachedExternalChangeToggles";
 import { WebServiceSettings } from "./settings-view/sections/WebServiceSettings";
 import {
@@ -1773,6 +1774,15 @@ export function SettingsView({
             )}
             <button
               type="button"
+              className={`settings-nav ${activeSection === "runtime" ? "active" : ""}`}
+              onClick={() => setActiveSection("runtime")}
+              title={sidebarCollapsed ? t("settings.sidebarRuntime") : ""}
+            >
+              <TerminalSquare aria-hidden />
+              {!sidebarCollapsed && t("settings.sidebarRuntime")}
+            </button>
+            <button
+              type="button"
               className={`settings-nav ${activeSection === "other" ? "active" : ""}`}
               onClick={() => setActiveSection("other")}
               title={sidebarCollapsed ? t("settings.sidebarOther") : ""}
@@ -2297,9 +2307,6 @@ export function SettingsView({
               <OtherSection
                 title={t("settings.sidebarOther")}
                 description={t("settings.otherDescription")}
-                t={t}
-                appSettings={appSettings}
-                onUpdateAppSettings={onUpdateAppSettings}
                 sessionRadarRecentCompletedSessions={sessionRadarRecentCompletedSessions}
                 onDeleteSessionRadarHistory={handleDeleteSessionRadarHistoryInSettings}
                 workspace={selectedProjectSessionWorkspace}
@@ -2311,6 +2318,13 @@ export function SettingsView({
                 loading={selectedWorkspaceThreadListLoading}
                 onEnsureWorkspaceThreads={onEnsureWorkspaceThreads}
                 onDeleteWorkspaceThreads={handleDeleteWorkspaceThreadsInSettings}
+              />
+            )}
+            {activeSection === "runtime" && (
+              <RuntimePoolSection
+                t={t}
+                appSettings={appSettings}
+                onUpdateAppSettings={onUpdateAppSettings}
               />
             )}
             {activeSection === "community" && (

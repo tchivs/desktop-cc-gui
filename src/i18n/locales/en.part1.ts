@@ -451,6 +451,7 @@ const enPart1 = {
     sidebarOpenIn: "Open in",
     sidebarWebService: "Web Service",
     sidebarGit: "Git",
+    sidebarRuntime: "Runtime Pool",
     sidebarOther: "Other",
     sidebarReleaseNotes: "Release Notes",
     sidebarVendors: "Vendors",
@@ -1157,19 +1158,56 @@ const enPart1 = {
       "When switching provider/source externally, click this button in the client to refresh.",
     runtimePoolTitle: "Runtime Pool Console",
     runtimePoolDescription:
-      "Inspect managed Codex runtimes, adjust pool budgets, and manually close or pin active runtimes.",
+      "Inspect managed Codex runtimes with a dedicated control surface for heat, budgets, diagnostics, and manual intervention.",
+    runtimePanelTitle: "Runtime Pool",
+    runtimePanelDescription:
+      "A dedicated panel for runtime orchestration. Use it to inspect pool health, tune capacity, and manually intervene when a runtime drifts.",
+    runtimeMetricTotal: "Total",
+    runtimeMetricHot: "Hot",
+    runtimeMetricWarm: "Warm",
+    runtimeMetricBusy: "Busy",
+    runtimeMetricPinned: "Pinned",
+    runtimePolicyTitle: "Lifecycle Policy",
+    runtimePolicyDescription:
+      "Controls what happens to managed runtimes at launch, on shutdown, and after abnormal exits.",
     runtimeRestoreThreadsOnlyOnLaunch: "Restore thread metadata only on launch",
+    runtimeRestoreThreadsOnlyOnLaunchDesc:
+      "Restore workspace UI and thread metadata without bulk-starting runtimes for every visible workspace.",
     runtimeForceCleanupOnExit: "Force cleanup managed runtimes on exit",
+    runtimeForceCleanupOnExitDesc:
+      "Drain managed Codex runtimes when the app exits to reduce stranded background processes on slower machines.",
     runtimeOrphanSweepOnLaunch: "Sweep orphan runtimes on next launch",
+    runtimeOrphanSweepOnLaunchDesc:
+      "Scan startup ledger state and attempt cleanup for orphaned runtimes left behind by abnormal exits.",
+    runtimeBudgetTitle: "Capacity & Warm Budget",
+    runtimeBudgetDescription:
+      "The goal is to make runtime count budget-driven instead of workspace-driven.",
     runtimeMaxHot: "Codex hot limit",
+    runtimeMaxHotHelp:
+      "Maximum number of instantly reusable runtimes. Higher is faster, but costs more memory.",
     runtimeMaxWarm: "Codex warm limit",
+    runtimeMaxWarmHelp:
+      "Maximum number of idle warm runtimes kept around for quicker recovery from cold.",
     runtimeWarmTtl: "Warm TTL (seconds)",
+    runtimeWarmTtlHelp:
+      "How long an unused warm runtime can stay alive before it is cooled back to cold.",
     runtimePoolSummary: "Runtime pool summary",
     runtimeSummaryLine:
       "Total {{total}} · Hot {{hot}} · Warm {{warm}} · Busy {{busy}} · Pinned {{pinned}}",
     runtimeDiagnosticsLine:
       "Orphan cleaned {{cleaned}} · Orphan failed {{failed}} · Forced kill {{forced}}",
+    runtimeRowsTitle: "Active runtimes",
+    runtimeRowsDescription:
+      "Each row is one managed runtime with its workspace, state, process details, and last activity.",
+    runtimePathLabel: "Workspace path:",
+    runtimeLeaseSourcesLabel: "Lease sources:",
+    runtimeProcessLabel: "Process:",
+    runtimeBinaryLabel: "Resolved binary:",
+    runtimeStartedAtLabel: "Started",
+    runtimeLastUsedLabel: "Last used",
     runtimePoolEmpty: "No managed runtime is active right now.",
+    runtimeEmptyDescription:
+      "This usually means there is no active Codex session, or the pool has already cooled idle runtimes back to cold.",
     runtimePin: "Pin",
     runtimeUnpin: "Unpin",
     runtimeRelease: "Release",

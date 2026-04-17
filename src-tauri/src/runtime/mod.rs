@@ -550,9 +550,19 @@ impl RuntimeManager {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "action")]
 pub(crate) enum RuntimePoolMutation {
-    Close { workspace_id: String },
-    ReleaseToCold { workspace_id: String },
-    Pin { workspace_id: String, pinned: bool },
+    Close {
+        #[serde(alias = "workspaceId")]
+        workspace_id: String,
+    },
+    ReleaseToCold {
+        #[serde(alias = "workspaceId")]
+        workspace_id: String,
+    },
+    Pin {
+        #[serde(alias = "workspaceId")]
+        workspace_id: String,
+        pinned: bool,
+    },
 }
 
 #[tauri::command]

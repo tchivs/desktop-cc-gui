@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 9
+- **Total Sessions**: 10
 - **Last Active**: 2026-04-17
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~474 | Active |
+| `journal-1.md` | ~526 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 10 | 2026-04-17 | 补录：移除已归档的回溯变更目录 | `57885b0` | `feature/vvvv0.4.3` |
 | 9 | 2026-04-17 | 补录：同步回溯 specs 并归档变更 | `8b5114f` | `feature/vvvv0.4.3` |
 | 8 | 2026-04-17 | 补录：回溯模式与文件选择策略改造 | `b33862c` | `feature/vvvv0.4.3` |
 | 7 | 2026-04-17 | Claude rollout plan-card fallback and approval detail cleanup | `7999a1f` | `feature/vvvv0.4.2-1` |

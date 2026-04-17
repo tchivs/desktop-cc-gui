@@ -472,3 +472,55 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 10: 补录：移除已归档的回溯变更目录
+
+**Date**: 2026-04-17
+**Task**: 补录：移除已归档的回溯变更目录
+**Branch**: `feature/vvvv0.4.3`
+
+### Summary
+
+(Add summary)
+
+### Main Changes
+
+任务目标
+- 清理 rewind-mutation-only-file-selection 的活动 change 目录，补齐归档迁移闭环。
+
+主要改动
+- 删除 openspec/changes/rewind-mutation-only-file-selection 下的活动副本。
+- 保持 archive 目录中保留 proposal、design、tasks 与 delta specs，避免 active 与 archive 双写并存。
+- 验证归档语义从“复制”收口为“迁移”。
+
+涉及模块
+- openspec/changes/rewind-mutation-only-file-selection
+- openspec/changes/archive/2026-04-17-rewind-mutation-only-file-selection
+
+验证结果
+- git status 已确认活动目录删除被提交。
+- archive 目录保留完整历史材料。
+- 工作区已恢复干净状态。
+
+后续事项
+- 无，回溯改动与提案归档链路已闭环。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `57885b0` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

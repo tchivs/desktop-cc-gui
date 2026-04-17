@@ -3,13 +3,14 @@
  * Generic Tool Block Component - for displaying various tool calls
  * 使用 task-container 样式 + codicon 图标（匹配参考项目）
  */
-import { memo, useMemo, useState } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import type { ConversationItem } from '../../../../types';
 import { parseDiff, type ParsedDiffLine } from '../../../../utils/diff';
 import { computeDiff } from '../../utils/diffUtils';
 import { LocalImage } from '../LocalImage';
+import { Markdown } from '../Markdown';
 import {
   asRecord,
   extractToolName,
@@ -66,6 +67,12 @@ type DisplayChange = {
   diffText?: string;
   diffPreviewLines: ParsedDiffLine[];
   diffPreviewTruncated: boolean;
+};
+
+type ExitPlanCardContent = {
+  planMarkdown: string;
+  planFilePath: string;
+  rawText: string;
 };
 
 interface GenericToolBlockProps {
@@ -322,6 +329,89 @@ function countContentLines(value: string): number {
     return 0;
   }
   return value.split('\n').length;
+}
+
+function parseLabeledSections(rawText: string): Map<string, string> {
+  const sections = new Map<string, string>();
+  const normalized = rawText.replace(/\r\n/g, '\n').trim();
+  if (!normalized) {
+    return sections;
+  }
+
+  const lines = normalized.split('\n');
+  let currentLabel: string | null = null;
+  let buffer: string[] = [];
+
+  const flush = () => {
+    if (!currentLabel) {
+      return;
+    }
+    sections.set(currentLabel, buffer.join('\n').trim());
+    buffer = [];
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/^[A-Z][A-Z0-9_]{2,}$/.test(trimmed)) {
+      flush();
+      currentLabel = trimmed;
+      continue;
+    }
+    if (currentLabel) {
+      buffer.push(line);
+    }
+  }
+
+  flush();
+  return sections;
+}
+
+function extractExitPlanCardContent(
+  item: Extract<ConversationItem, { kind: 'tool' }>,
+): ExitPlanCardContent | null {
+  const rawSources = [item.detail, item.output ?? '']
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+  const rawText = rawSources.join('\n\n').trim();
+
+  if (!rawText) {
+    return null;
+  }
+
+  let planMarkdown = '';
+  let planFilePath = '';
+  let normalizedRawText = rawText;
+
+  for (const source of rawSources) {
+    try {
+      const parsed = JSON.parse(source) as unknown;
+      if (parsed && typeof parsed === 'object') {
+        const record = parsed as Record<string, unknown>;
+        if (typeof record.plan === 'string' && record.plan.trim()) {
+          planMarkdown = record.plan.trim();
+        }
+        if (typeof record.planFilePath === 'string' && record.planFilePath.trim()) {
+          planFilePath = record.planFilePath.trim();
+        }
+        normalizedRawText = JSON.stringify(parsed, null, 2);
+        break;
+      }
+    } catch {
+      // continue checking remaining raw sources
+    }
+  }
+
+  if (!planMarkdown && !planFilePath) {
+    const sections = parseLabeledSections(rawText);
+    planMarkdown = sections.get('PLAN') ?? '';
+    planFilePath = sections.get('PLANFILEPATH') ?? '';
+  }
+
+  return {
+    planMarkdown,
+    planFilePath,
+    rawText: normalizedRawText,
+  };
 }
 
 function decodeToolPath(value: string): string {
@@ -813,12 +903,40 @@ export const GenericToolBlock = memo(function GenericToolBlock({
   onOpenDiffPath,
 }: GenericToolBlockProps) {
   const { t } = useTranslation();
+  const translateWithFallback = useCallback((key: string, fallback: string) => {
+    const translated = t(key, { defaultValue: fallback });
+    return translated && translated !== key ? translated : fallback;
+  }, [t]);
   const toolName = extractToolName(item.title);
   const displayName = getToolDisplayName(toolName, item.title);
   const codiconClass = getCodiconClass(toolName, item.title);
   const hasChanges = (item.changes ?? []).length > 0;
   const status = getToolStatus(item, hasChanges);
   const summary = extractSummary(item, toolName);
+  const isExitPlanTool = toolName.toLowerCase() === 'exitplanmode';
+  const exitPlanContent = useMemo(
+    () => (isExitPlanTool ? extractExitPlanCardContent(item) : null),
+    [isExitPlanTool, item],
+  );
+  const exitPlanCopy = useMemo(
+    () => ({
+      ariaLabel: translateWithFallback('messages.exitPlanCard.ariaLabel', 'Plan ready card'),
+      title: translateWithFallback('messages.exitPlanCard.title', 'Execution Plan Ready'),
+      modeLabel: translateWithFallback('messages.exitPlanCard.modeLabel', 'Exit Plan mode'),
+      planSummary: translateWithFallback('messages.exitPlanCard.planSummary', 'Plan summary'),
+      executionHandoff: translateWithFallback(
+        'messages.exitPlanCard.executionHandoff',
+        'Execution handoff',
+      ),
+      executionHandoffDescription: translateWithFallback(
+        'messages.exitPlanCard.executionHandoffDescription',
+        'The planning step is complete. Exit Plan mode to continue with implementation against this approved plan.',
+      ),
+      planFile: translateWithFallback('messages.exitPlanCard.planFile', 'Plan file'),
+      rawOutput: translateWithFallback('messages.exitPlanCard.rawOutput', 'Raw output'),
+    }),
+    [translateWithFallback],
+  );
 
   const isCollapsible = isCollapsibleTool(toolName, item.title);
   const [internalExpanded, setInternalExpanded] = useState(false);
@@ -957,6 +1075,90 @@ export const GenericToolBlock = memo(function GenericToolBlock({
       onToggle(item.id);
     }
   };
+
+  if (isExitPlanTool && exitPlanContent) {
+    return (
+      <section
+        className="tool-exit-plan-card"
+        aria-label={exitPlanCopy.ariaLabel}
+      >
+        <button
+          type="button"
+          className={`tool-exit-plan-card-header${isExpanded ? ' is-expanded' : ''}`}
+          onClick={handleClick}
+          aria-expanded={isExpanded}
+        >
+          <div className="tool-exit-plan-card-title-wrap">
+            <span
+              className="codicon codicon-notebook tool-exit-plan-card-icon"
+              aria-hidden
+            />
+            <div className="tool-exit-plan-card-title-copy">
+              <span className="tool-exit-plan-card-title">
+                {exitPlanCopy.title}
+              </span>
+              <span className="tool-exit-plan-card-subtitle">
+                {exitPlanCopy.modeLabel}
+              </span>
+            </div>
+          </div>
+          <span
+            className={`codicon ${isExpanded ? 'codicon-chevron-down' : 'codicon-chevron-right'} tool-exit-plan-card-chevron`}
+            aria-hidden
+          />
+        </button>
+
+        {isExpanded ? (
+          <div className="tool-exit-plan-card-body">
+            {exitPlanContent.planMarkdown ? (
+              <section className="tool-exit-plan-card-section">
+                <div className="tool-exit-plan-card-section-label">
+                  {exitPlanCopy.planSummary}
+                </div>
+                <div className="tool-exit-plan-card-markdown">
+                  <Markdown value={exitPlanContent.planMarkdown} workspaceId={workspaceId} />
+                </div>
+              </section>
+            ) : null}
+
+            <section className="tool-exit-plan-card-section">
+              <div className="tool-exit-plan-card-section-label">
+                {exitPlanCopy.executionHandoff}
+              </div>
+              <p className="tool-exit-plan-card-handoff-copy">
+                {exitPlanCopy.executionHandoffDescription}
+              </p>
+            </section>
+
+            {exitPlanContent.planFilePath ? (
+              <section className="tool-exit-plan-card-section">
+                <div className="tool-exit-plan-card-section-label">
+                  {exitPlanCopy.planFile}
+                </div>
+                <code
+                  className="tool-exit-plan-card-path"
+                  title={exitPlanContent.planFilePath}
+                >
+                  {exitPlanContent.planFilePath}
+                </code>
+              </section>
+            ) : null}
+
+            {!exitPlanContent.planMarkdown && !exitPlanContent.planFilePath ? (
+              <section className="tool-exit-plan-card-section">
+                <div className="tool-exit-plan-card-section-label">
+                  {exitPlanCopy.rawOutput}
+                </div>
+                <div className="tool-exit-plan-card-markdown">
+                  <Markdown value={exitPlanContent.rawText} workspaceId={workspaceId} />
+                </div>
+              </section>
+            ) : null}
+          </div>
+        ) : null}
+      </section>
+    );
+  }
 
   if (showCollapsedMultiFileRows) {
     return (

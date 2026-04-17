@@ -70,10 +70,12 @@ vi.mock("../../../services/tauri", () => ({
 
 vi.mock("../../../utils/threadItems", () => ({
   buildItemsFromThread: vi.fn(),
+  extractClaudeApprovalResumeEntries: vi.fn(() => []),
   getThreadTimestamp: vi.fn(),
   isReviewingFromThread: vi.fn(),
   mergeThreadItems: vi.fn(),
   previewThreadName: vi.fn(),
+  stripClaudeApprovalResumeArtifacts: vi.fn((text: string) => text),
 }));
 
 vi.mock("../utils/threadStorage", () => ({

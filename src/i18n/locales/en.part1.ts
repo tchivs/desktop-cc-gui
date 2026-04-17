@@ -1436,6 +1436,17 @@ const enPart1 = {
     copyCodeBlockWithFence: "Copy fenced code block",
     copy: "Copy",
     copyWithFence: "Fence copy",
+    exitPlanCard: {
+      ariaLabel: "Plan ready card",
+      title: "Execution Plan Ready",
+      modeLabel: "Exit Plan mode",
+      planSummary: "Plan summary",
+      executionHandoff: "Execution handoff",
+      executionHandoffDescription:
+        "The planning step is complete. Exit Plan mode to continue with implementation against this approved plan.",
+      planFile: "Plan file",
+      rawOutput: "Raw output",
+    },
     anchorNavigation: "Message anchors",
     anchorJumpToUser: "Go to user message {{index}}",
     anchorUserTitle: "User #{{index}}",

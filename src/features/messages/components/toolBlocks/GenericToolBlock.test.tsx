@@ -106,6 +106,38 @@ const blockedModeItem: Extract<ConversationItem, { kind: "tool" }> = {
     "requestUserInput is blocked while effective_mode=code\n\nSwitch to Plan mode and resend the prompt when user input is needed.",
 };
 
+const exitPlanModeItem: Extract<ConversationItem, { kind: "tool" }> = {
+  id: "tool-5",
+  kind: "tool",
+  toolType: "toolCall",
+  title: "Tool: ExitPlanMode",
+  detail:
+    "PLAN\n# Plan\n\n## Context\nCreate a few sample files.\n\n## Steps\n- add aaa.txt\n- add bbb.txt\n\nPLANFILEPATH\n/Users/demo/.claude/plans/sample-plan.md",
+  status: "completed",
+};
+
+const exitPlanModeRawFallbackItem: Extract<ConversationItem, { kind: "tool" }> = {
+  id: "tool-6",
+  kind: "tool",
+  toolType: "toolCall",
+  title: "Tool: ExitPlanMode",
+  detail: "plain exit plan payload without labeled sections",
+  status: "completed",
+};
+
+const exitPlanModeJsonItem: Extract<ConversationItem, { kind: "tool" }> = {
+  id: "tool-7",
+  kind: "tool",
+  toolType: "toolCall",
+  title: "Tool: ExitPlanMode",
+  detail: JSON.stringify({
+    plan: "# 计划\n\n## Context\n用户要求创建多个简单的文本文件。",
+    planFilePath: "/Users/demo/.claude/plans/json-plan.md",
+  }),
+  output: "Exit plan mode?",
+  status: "completed",
+};
+
 describe("GenericToolBlock", () => {
   afterEach(() => {
     cleanup();
@@ -372,5 +404,64 @@ describe("GenericToolBlock", () => {
     const rawText = rawPre?.textContent ?? "";
     expect(rawText).toContain("## Summary");
     expect(rawText).toContain("| Name | Value |");
+  });
+
+  it("renders exit plan mode as a dedicated plan-ready card", () => {
+    const view = render(
+      <GenericToolBlock
+        item={exitPlanModeItem}
+        isExpanded={false}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Execution Plan Ready")).toBeTruthy();
+    expect(screen.queryByText("Plan summary")).toBeNull();
+    const header = view.container.querySelector(".tool-exit-plan-card-header");
+    expect(header).toBeTruthy();
+    if (header) {
+      fireEvent.click(header);
+    }
+    expect(screen.getByText("Plan summary")).toBeTruthy();
+    expect(screen.getByText("Execution handoff")).toBeTruthy();
+    expect(screen.getByText("Plan file")).toBeTruthy();
+    expect(screen.getByText("/Users/demo/.claude/plans/sample-plan.md")).toBeTruthy();
+    expect(view.container.querySelector(".tool-exit-plan-card")).toBeTruthy();
+  });
+
+  it("falls back to raw output when exit plan payload has no labeled sections", () => {
+    const view = render(
+      <GenericToolBlock
+        item={exitPlanModeRawFallbackItem}
+        isExpanded={false}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    const header = view.container.querySelector(".tool-exit-plan-card-header");
+    expect(header).toBeTruthy();
+    if (header) {
+      fireEvent.click(header);
+    }
+    expect(screen.getByText("Raw output")).toBeTruthy();
+    expect(view.container.querySelector(".tool-exit-plan-card-markdown")?.textContent ?? "").toContain(
+      "plain exit plan payload without labeled sections",
+    );
+  });
+
+  it("parses json exit plan payload and renders plan markdown", () => {
+    render(
+      <GenericToolBlock
+        item={exitPlanModeJsonItem}
+        isExpanded={false}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Execution Plan ReadyExit Plan mode" }));
+    expect(screen.getByText("计划")).toBeTruthy();
+    expect(screen.getByText("用户要求创建多个简单的文本文件。")).toBeTruthy();
+    expect(screen.getByText("/Users/demo/.claude/plans/json-plan.md")).toBeTruthy();
+    expect(screen.queryByText("Exit plan mode?")).toBeNull();
   });
 });

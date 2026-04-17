@@ -22,6 +22,7 @@ const CLAUDE_FILE_CONTENT_KEYS: &[&str] = &["content", "text", "new_string", "ne
 pub(super) enum ClaudeModeBlockedKind {
     RequestUserInput,
     FileChange,
+    CommandExecution,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,6 +106,15 @@ pub(super) fn classify_claude_mode_blocked_tool(tool_name: &str) -> Option<Claud
     }
     if normalized == "askuserquestion" {
         return Some(ClaudeModeBlockedKind::RequestUserInput);
+    }
+    if normalized.contains("bash")
+        || normalized.contains("exec")
+        || normalized.contains("command")
+        || normalized.contains("shell")
+        || normalized.contains("terminal")
+        || normalized.contains("stdin")
+    {
+        return Some(ClaudeModeBlockedKind::CommandExecution);
     }
     if normalized == "edit"
         || normalized == "multiedit"

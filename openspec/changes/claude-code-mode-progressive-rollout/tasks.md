@@ -34,14 +34,14 @@
 ### Batch E [P1] 后续阶段
 
 - [ ] E.1 继续收敛 Claude 原生命令审批 shape，避免非文件工具仍退化
-- [ ] E.2 校验并对齐 `acceptEdits` 的真实 CLI 语义
+- [x] E.2 校验并对齐 `acceptEdits` 的真实 CLI 语义
 - [ ] E.3 在语义确认后开放 Claude `acceptEdits`
 
 ## 1. 验证门禁
 
 - [x] V.1 `npm run check:large-files:gate`
-- [ ] V.2 `npm run typecheck`
-- [ ] V.3 `npm run test`
+- [x] V.2 `npm run typecheck`
+- [x] V.3 `npm run test`
 - [ ] V.4 Claude 手测矩阵补齐：
   - `plan` 模式只读执行
   - `full-access` 不进入审批链

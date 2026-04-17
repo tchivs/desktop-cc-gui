@@ -1,11 +1,22 @@
 use super::*;
 use serde_json::json;
 
+fn test_workspace_path() -> PathBuf {
+    std::env::temp_dir().join("mossx-claude-test-workspace")
+}
+
+fn test_external_spec_root() -> String {
+    std::env::temp_dir()
+        .join("mossx-external-openspec")
+        .to_string_lossy()
+        .to_string()
+}
+
 #[test]
 fn session_creation() {
     let session = ClaudeSession::new(
         "test-workspace".to_string(),
-        PathBuf::from("/tmp/test"),
+        test_workspace_path(),
         None,
     );
 
@@ -54,7 +65,7 @@ fn format_synthetic_approval_resume_message_embeds_marker_payload() {
 async fn ask_user_question_registers_and_clears_pending_request() {
     let session = ClaudeSession::new(
         "test-workspace".to_string(),
-        PathBuf::from("/tmp/test"),
+        test_workspace_path(),
         None,
     );
     let input = json!({
@@ -97,7 +108,7 @@ async fn ask_user_question_registers_and_clears_pending_request() {
 fn ask_user_question_preserves_multi_select_flag() {
     let session = ClaudeSession::new(
         "test-workspace".to_string(),
-        PathBuf::from("/tmp/test"),
+        test_workspace_path(),
         None,
     );
     let input = json!({
@@ -130,7 +141,7 @@ fn ask_user_question_preserves_multi_select_flag() {
 fn has_pending_user_input_accepts_numeric_id_for_backward_compat() {
     let session = ClaudeSession::new(
         "test-workspace".to_string(),
-        PathBuf::from("/tmp/test"),
+        test_workspace_path(),
         None,
     );
     if let Ok(mut pending) = session.pending_user_inputs.lock() {
@@ -144,7 +155,7 @@ fn has_pending_user_input_accepts_numeric_id_for_backward_compat() {
 fn has_any_pending_user_input_reports_presence() {
     let session = ClaudeSession::new(
         "test-workspace".to_string(),
-        PathBuf::from("/tmp/test"),
+        test_workspace_path(),
         None,
     );
     assert!(!session.has_any_pending_user_input());
@@ -158,7 +169,7 @@ fn has_any_pending_user_input_reports_presence() {
 async fn respond_to_user_input_rejects_mismatched_request_id() {
     let session = ClaudeSession::new(
         "test-workspace".to_string(),
-        PathBuf::from("/tmp/test"),
+        test_workspace_path(),
         None,
     );
     if let Ok(mut pending) = session.pending_user_inputs.lock() {
@@ -185,16 +196,12 @@ async fn respond_to_user_input_rejects_mismatched_request_id() {
 fn build_command_adds_external_spec_root_when_configured() {
     let session = ClaudeSession::new(
         "test-workspace".to_string(),
-        PathBuf::from("/tmp/test"),
+        test_workspace_path(),
         None,
     );
     let mut params = SendMessageParams::default();
     params.text = "hello".to_string();
-    params.custom_spec_root = Some(if cfg!(windows) {
-        "C:\\tmp\\external-openspec".to_string()
-    } else {
-        "/tmp/external-openspec".to_string()
-    });
+    params.custom_spec_root = Some(test_external_spec_root());
 
     let command = session.build_command(&params, false);
     let args: Vec<String> = command
@@ -226,7 +233,7 @@ fn should_not_use_stream_json_input_for_single_line_text_without_images() {
 fn build_command_uses_stream_json_for_multiline_text() {
     let session = ClaudeSession::new(
         "test-workspace".to_string(),
-        PathBuf::from("/tmp/test"),
+        test_workspace_path(),
         None,
     );
     let mut params = SendMessageParams::default();
@@ -250,7 +257,7 @@ fn build_command_uses_stream_json_for_multiline_text() {
 fn build_resume_command_uses_stream_json_for_multiline_answer() {
     let session = ClaudeSession::new(
         "test-workspace".to_string(),
-        PathBuf::from("/tmp/test"),
+        test_workspace_path(),
         None,
     );
     let mut params = SendMessageParams::default();

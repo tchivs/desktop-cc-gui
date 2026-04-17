@@ -258,6 +258,7 @@ enum ClaudeCompactionSignal {
 enum ClaudePermissionSignal {
     RequestUserInputBlocked,
     FileChangeBlocked,
+    CommandExecutionBlocked,
 }
 
 fn normalize_claude_signal_token(value: &str) -> String {
@@ -315,6 +316,9 @@ fn detect_claude_permission_signal(data: &Value) -> Option<ClaudePermissionSigna
     }
     if blocked_method == "item/fileChange/requestApproval" {
         return Some(ClaudePermissionSignal::FileChangeBlocked);
+    }
+    if blocked_method == "item/commandExecution/requestApproval" {
+        return Some(ClaudePermissionSignal::CommandExecutionBlocked);
     }
 
     None
@@ -643,7 +647,8 @@ pub fn engine_event_to_app_server_event(
                 if let Some(signal) = detect_claude_permission_signal(data) {
                     match signal {
                         ClaudePermissionSignal::RequestUserInputBlocked
-                        | ClaudePermissionSignal::FileChangeBlocked => {
+                        | ClaudePermissionSignal::FileChangeBlocked
+                        | ClaudePermissionSignal::CommandExecutionBlocked => {
                             let blocked_method =
                                 get_value_by_aliases(data, &["blockedMethod", "blocked_method"])
                                     .and_then(Value::as_str)
@@ -930,6 +935,43 @@ mod tests {
         assert_eq!(
             mapped.message["params"]["requestId"],
             Value::String("tool-edit-1".to_string())
+        );
+    }
+
+    #[test]
+    fn claude_command_execution_permission_denied_raw_event_maps_to_mode_blocked() {
+        let event = EngineEvent::Raw {
+            workspace_id: "ws-approval".to_string(),
+            engine: EngineType::Claude,
+            data: json!({
+                "type": "permission_denied",
+                "source": "claude_permission_denied",
+                "blockedMethod": "item/commandExecution/requestApproval",
+                "effectiveMode": "code",
+                "reasonCode": "claude_command_execution_permission_denied",
+                "reason": "Claude blocked a command-execution tool before any recoverable GUI approval request could start.",
+                "suggestion": "Retry in full-access or rewrite the action to use supported file tools.",
+                "requestId": "tool-bash-1",
+            }),
+        };
+
+        let mapped =
+            engine_event_to_app_server_event(&event, "thread-1", "item-1").expect("mapped event");
+        assert_eq!(
+            mapped.message["method"],
+            Value::String("collaboration/modeBlocked".to_string())
+        );
+        assert_eq!(
+            mapped.message["params"]["blockedMethod"],
+            Value::String("item/commandExecution/requestApproval".to_string())
+        );
+        assert_eq!(
+            mapped.message["params"]["reasonCode"],
+            Value::String("claude_command_execution_permission_denied".to_string())
+        );
+        assert_eq!(
+            mapped.message["params"]["requestId"],
+            Value::String("tool-bash-1".to_string())
         );
     }
 

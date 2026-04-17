@@ -164,3 +164,66 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: Claude 模式审批修复与 Trellis 记录规则补强
+
+**Date**: 2026-04-17
+**Task**: Claude 模式审批修复与 Trellis 记录规则补强
+**Branch**: `feature/vvvv0.4.2-1`
+
+### Summary
+
+补录 Claude 模式审批与计划渲染修复，并强化提交后 record-session 通用规则
+
+### Main Changes
+
+| 项目目标 | 结果 |
+|---|---|
+| Claude 模式提案推进 | 完成计划卡片渲染、审批链路、批量审批与路径兼容性修复 |
+| 边界条件治理 | 收敛批量审批过滤、绝对路径 workspace 校验、hook cleanup 与 stale closure 风险 |
+| Large file governance | 将 `src/features/messages/components/Messages.test.tsx` 拆分至阈值内并通过 hard gate |
+| Trellis 记录规则 | 将 commit 后必须执行 record-session 的约束升级为 repo-relative、多人/多机通用规则 |
+
+**主要改动**:
+- 修复 Claude 模式中 plan/ExitPlanMode 变种卡片的识别与 Markdown 渲染问题。
+- 补齐审批链路在 app-shell / layout / messages / approval toast 之间的传递，修复批量同意按钮缺失、重复 tool 字段展示、非文件审批混入批量放行等问题。
+- 增强 Rust 侧 Claude synthetic approval 对绝对路径和缺失父目录场景的处理，并补充定向测试。
+- 拆分 `Messages.test.tsx` 为更小的模块化测试文件，恢复 large-file governance 通过状态。
+- 在 `AGENTS.md`、`.trellis/workflow.md`、`.agents/skills/record-session/SKILL.md` 中新增通用 record-session 门禁，要求从仓库根目录执行、统一使用 repo-relative 路径、通过 `.trellis/.developer` 自动解析 active developer，并在缺失时显式向协作者询问 developer id。
+
+**涉及模块**:
+- Frontend: `src/app-shell*`, `src/features/messages/**`, `src/features/app/components/ApprovalToasts*`, `src/features/threads/hooks/useThreadApprovals*`, `src/features/layout/hooks/useLayoutNodes.tsx`, `src/styles/**`
+- Backend: `src-tauri/src/engine/claude/**`, `src-tauri/src/engine/claude_stream_helpers.rs`
+- Workflow / Docs: `AGENTS.md`, `.trellis/workflow.md`, `.agents/skills/record-session/SKILL.md`, `openspec/changes/claude-code-mode-progressive-rollout/tasks.md`
+
+**验证结果**:
+- `npm exec vitest run src/features/app/components/ApprovalToasts.test.tsx src/features/threads/hooks/useThreadApprovals.test.ts src/features/messages/components/Messages.test.tsx src/features/messages/components/Messages.rich-content.test.tsx src/features/messages/components/toolBlocks/GenericToolBlock.test.tsx`
+- `cargo test --manifest-path src-tauri/Cargo.toml synthetic_claude_file_approval_accepts_absolute_workspace_path -- --nocapture`
+- `cargo test --manifest-path src-tauri/Cargo.toml synthetic_claude_file_approval_accept_creates_missing_parent_directories -- --nocapture`
+- `npm run typecheck`
+- `npm run check:large-files:gate`
+
+**后续事项**:
+- 后续所有 AI 提交都必须继续执行 record-session；若 `.trellis/.developer` 缺失，需要先向当前协作者确认 developer id。
+- 若要继续推进 Claude 模式提案，下一步应基于最新提案状态继续补行为验证与提案回写。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fd9272e` | (see git log) |
+| `ba0b46d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

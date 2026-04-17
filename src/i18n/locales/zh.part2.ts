@@ -1808,9 +1808,15 @@ const zhPart2 = {
     impactFollowUp:
       "如果下面列出了文件，表示这些文件对应的变更发生在将被回退的这段历史里，确认前请先核对。",
     workspaceRestoreSectionTitle: "工作区文件策略",
-    restoreWorkspaceFilesLabel: "回退工作区文件",
-    restoreWorkspaceFilesHint:
-      "关闭后仅回溯会话历史，不会改写当前工作区中的文件内容。",
+    modeMessagesAndFilesLabel: "回退消息 + 相关文件",
+    modeMessagesAndFilesHint:
+      "同时回退当前会话历史和这段历史对应的工作区文件变更。",
+    modeMessagesOnlyLabel: "只回退消息",
+    modeMessagesOnlyHint:
+      "只回退会话历史，不改写当前工作区中的文件内容。",
+    modeFilesOnlyLabel: "只回退文件",
+    modeFilesOnlyHint:
+      "只恢复这段历史对应的文件，不改写当前会话消息历史。",
     filesSectionTitle: "受影响文件",
     filesRailTitle: "文件列表",
     filesEmpty: "这段回溯历史里没有识别到文件变更。",

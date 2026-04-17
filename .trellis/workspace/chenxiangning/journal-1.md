@@ -227,3 +227,40 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: 补充 v0.4.2 changelog 发布说明
+
+**Date**: 2026-04-17
+**Task**: 补充 v0.4.2 changelog 发布说明
+**Branch**: `feature/vvvv0.4.2-1`
+
+### Summary
+
+在 CHANGELOG 的 v0.4.2 段落补充最近 Claude rollout / default mode 相关中英双语发布说明，保留原有条目不删减。
+
+### Main Changes
+
+- 变更文件：CHANGELOG.md
+- 变更范围：仅追加 v0.4.2 段落中的 Features 与 Fixes，中英双语同步
+- 关联提交：a85197c docs(changelog): 补充 v0.4.2 发布说明
+- 验证结果：已检查 changelog 顶部结构，v0.4.2 保持最上方且原有 6 条 fixes 未删减
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a85197c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -1019,3 +1019,61 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 19: 优化 runtime 恢复提示与预算设置边界处理
+
+**Date**: 2026-04-18
+**Task**: 优化 runtime 恢复提示与预算设置边界处理
+**Branch**: `feature/vvvv0.4.3`
+
+### Summary
+
+(Add summary)
+
+### Main Changes
+
+任务目标:
+- 对当前工作区进行全面 review，重点检查边界条件处理、Windows 与 macOS 兼容性以及 3000 行大文件治理风险。
+- 修复 runtime 断链恢复提示与 Runtime Pool Console 中发现的问题，并完成提交记录。
+
+主要改动:
+- 为消息区新增 runtime 断链恢复卡片，覆盖 Broken pipe、workspace not connected 与 Windows pipe close 场景。
+- 将恢复识别逻辑拆分为独立纯函数与组件，避免继续膨胀 Messages.tsx，并保留重连失败错误详情与无 workspace 绑定提示。
+- 收紧 Runtime Pool Console 排版，明确 Codex-only 预算文案，修复预算输入的空值、非法值、越界值归一化回写。
+- 修正 zombie-suspected 状态的深色告警 tone，并补充中英文 i18n 与相关单测。
+
+涉及模块:
+- src/features/messages/components
+- src/features/settings/components/settings-view/sections
+- src/i18n/locales
+- src/styles/messages.css
+
+验证结果:
+- npx vitest run src/features/messages/components/Messages.test.tsx src/features/messages/components/runtimeReconnect.test.ts src/features/settings/components/settings-view/sections/runtimePoolSection.utils.test.ts
+- npm run typecheck
+- npx eslint src/features/messages/components/Messages.tsx src/features/messages/components/RuntimeReconnectCard.tsx src/features/messages/components/runtimeReconnect.ts src/features/messages/components/Messages.test.tsx src/features/messages/components/runtimeReconnect.test.ts src/features/settings/components/settings-view/sections/RuntimePoolSection.tsx src/features/settings/components/settings-view/sections/runtimePoolSection.utils.ts src/features/settings/components/settings-view/sections/runtimePoolSection.utils.test.ts src/i18n/locales/zh.part1.ts src/i18n/locales/en.part1.ts
+- npm run check:large-files
+- npm run check:large-files:near-threshold
+
+后续事项:
+- Messages.test.tsx 与 messages.css 仍处于 near-threshold watchlist，后续若继续扩展消息区交互，建议按块继续拆分测试与样式。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d7b0c02212d50a0af37f473ea15897a2a6226d38` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

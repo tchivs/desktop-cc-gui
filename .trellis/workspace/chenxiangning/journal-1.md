@@ -1363,3 +1363,64 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 25: 修复 Codex stale session 重连与 reconnect 卡片误判
+
+**Date**: 2026-04-19
+**Task**: 修复 Codex stale session 重连与 reconnect 卡片误判
+**Branch**: `feature/vvvv0.4.3`
+
+### Summary
+
+(Add summary)
+
+### Main Changes
+
+任务目标:
+- 修复 Broken pipe 后 Codex workspace session 假活导致当前会话无法续接、同工程新建 Codex 对话也失败的问题
+- 修复 runtime reconnect 卡片误判普通 assistant 正文为错误卡片的问题
+- 对当前工作区相关改动做边界条件、跨平台兼容和大文件治理 review，并直接修复发现的问题
+
+主要改动:
+- 在 src-tauri/src/backend/app_server.rs 为 WorkspaceSession 增加 probe_health，并修复 send_request_with_timeout 在 write_message 直接失败时未清理 pending 请求的问题
+- 在 src-tauri/src/codex/session_runtime.rs、src-tauri/src/shared/workspaces_core.rs、src-tauri/src/bin/cc_gui_daemon/daemon_state.rs 增加 stale session health gate，probe 失败时主动 stop/disconnect 后重建 session
+- 在 src/features/messages/components/runtimeReconnect.ts 收窄 reconnect 卡片识别，只对纯错误型消息触发，避免 assistant 正文引用 broken pipe 时被整段劫持进卡片
+- 补充前端 runtimeReconnect / Messages.runtime-reconnect 测试，以及后端 codex::session_runtime stale-session 契约测试
+
+涉及模块:
+- Codex runtime / workspace session lifecycle
+- daemon workspace reconnect flow
+- message reconnect card detection
+- runtime request pending cleanup
+
+验证结果:
+- 通过 npm run check:large-files
+- 通过 npm run typecheck
+- 通过 pnpm vitest run src/features/messages/components/runtimeReconnect.test.ts src/features/messages/components/Messages.runtime-reconnect.test.tsx
+- 通过 pnpm vitest run src/features/threads/hooks/useThreadActions.test.tsx -t "reconnects workspace and retries when codex start thread reports not connected"
+- 通过 cargo test --manifest-path src-tauri/Cargo.toml codex::session_runtime::tests -- --nocapture
+- 通过 cargo test --manifest-path src-tauri/Cargo.toml list_workspaces_marks_non_persistent_engines_connected_without_sessions -- --nocapture
+
+后续事项:
+- 可继续补一条更重的 integration test，模拟 stale session 被替换后 start_thread 成功的完整链路
+- Rust 仓库存在 existing warnings，本次未做顺手清理
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5c3cd46e8437193cbc503f3994dbce55d96a8ea1` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
